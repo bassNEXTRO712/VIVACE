@@ -488,6 +488,7 @@ async def confirm_deletion(data: CodeConfirm, user: dict = Depends(get_current_u
         await db.messages.delete_many({"company_id": {"$in": company_ids}})
     await db.messages.delete_many({"visitor_id": user["id"]})
     await db.verifications.delete_many({"user_id": user["id"]})
+    await db.password_resets.delete_many({"email": user["email"]})
     await db.users.delete_one({"id": user["id"]})
     return {"status": "ანგარიში წაიშალა"}
 
