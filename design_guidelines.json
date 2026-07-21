@@ -1,0 +1,107 @@
+{
+  "typography": {
+    "font_families": {
+      "heading": "'Noto Sans Georgian', sans-serif",
+      "body": "'Noto Sans Georgian', sans-serif"
+    },
+    "instructions": "Import Google font 'Noto Sans Georgian' in the index.html or index.css (e.g., @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap');). Do not use 'Inter' for headings.",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-bold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-semibold",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "body": "text-base text-gray-300 leading-relaxed"
+    }
+  },
+  "colors": {
+    "theme": "dark",
+    "css_variables_update": {
+      "background": "240 53% 8%",
+      "foreground": "210 20% 98%",
+      "card": "240 31% 13%",
+      "card-foreground": "210 20% 98%",
+      "popover": "240 31% 13%",
+      "popover-foreground": "210 20% 98%",
+      "primary": "25 95% 53%",
+      "primary-foreground": "0 0% 100%",
+      "secondary": "240 26% 17%",
+      "secondary-foreground": "210 20% 98%",
+      "muted": "240 26% 17%",
+      "muted-foreground": "215 20% 65%",
+      "accent": "25 95% 53%",
+      "accent-foreground": "0 0% 100%",
+      "destructive": "0 84.2% 60.2%",
+      "destructive-foreground": "0 0% 100%",
+      "border": "240 21% 21%",
+      "input": "240 21% 21%",
+      "ring": "25 95% 53%",
+      "radius": "0.5rem"
+    },
+    "descriptions": "Dark theme with specific base #0a0a20 (background) and #16162a (card) matching the client requirements, with vivid orange #f97316 as the primary accent color."
+  },
+  "visual_enhancers": {
+    "borders": "Use subtle borders 'border-border' which is mapped to #2a2a40 to separate sections without harsh lines.",
+    "shadows": "Deep ambient shadows like 'shadow-[0_8px_32px_rgba(0,0,0,0.5)]' for dropdowns or modals over the dark background. Inner shadows on inputs can give a tactile feel.",
+    "textures": "Background sections should be solid #0a0a20 with #16162a floating cards to maintain a clinical, professional dashboard feel.",
+    "surfaces": "Grid borders or subtle rounded cards (max 8px radius) for the profile management layout. No transparent dropdowns. Use solid dark colors to prevent text collision."
+  },
+  "layouts": {
+    "app_structure": "Dashboard-style side navigation or top navigation with a main content area. Wide max-w-7xl containers for profile forms to ensure high density and clarity.",
+    "profile_editor": "Bento grid or multi-column layout for profile settings. 1 column on mobile, 2 or 3 columns on desktop. Inputs should be well-spaced (gap-6) and strictly left-aligned.",
+    "media_gallery": "Masonry or responsive grid layout (grid-cols-2 md:grid-cols-4 lg:grid-cols-5) with gap-4 for images. Upload section should have dashed borders and clear orange CTA.",
+    "account_settings": "Vertical forms with clear spacing (gap-6) and distinct action buttons. Verification code input should use a flex layout with gap-2 or specialized OTP component."
+  },
+  "components": {
+    "buttons": "Rounded-md buttons with clear focus states (focus:ring-2 focus:ring-primary focus:outline-none). Primary buttons use bg-primary hover:bg-orange-600 transition-colors.",
+    "inputs": "Solid dark inputs bg-background border-border text-foreground rounded-md, with focus ring orange (focus:border-primary). Left-aligned labels above inputs.",
+    "cards": "bg-card border border-border shadow-sm rounded-lg. Padding should be generous (p-6 or p-8) to give content breathing room.",
+    "upload_zone": "Dashed border-border bg-card/50 hover:bg-card hover:border-primary transition-all p-8 flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px] rounded-lg.",
+    "gallery_item": "Relative positioning group. Image inside rounded-md with object-cover. Hover state shows dark overlay (bg-black/60) with 'delete' (წაშლა) icon button in the corner."
+  },
+  "image_urls": [
+    {
+      "url": "https://images.unsplash.com/photo-1627843240167-b1f9d28f732e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwZ2VvbWV0cmljJTIwbG9nb3xlbnwwfHx8fDE3ODQ2MzI2NDh8MA&ixlib=rb-4.1.0&q=85",
+      "category": "logo",
+      "description": "Minimalist geometric logo for the company profile placeholder"
+    },
+    {
+      "url": "https://images.unsplash.com/photo-1623428997047-296a86d28a20?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBvZmZpY2UlMjBidWlsZGluZyUyMG5pZ2h0fGVufDB8fHx8MTc4NDYzMjY0OHww&ixlib=rb-4.1.0&q=85",
+      "category": "cover_photo",
+      "description": "Modern office building night view, suitable for company cover photo"
+    },
+    {
+      "url": "https://images.pexels.com/photos/8117476/pexels-photo-8117476.jpeg",
+      "category": "gallery_photo",
+      "description": "Diverse team collaborating in a modern office, placeholder for gallery"
+    },
+    {
+      "url": "https://images.pexels.com/photos/7212946/pexels-photo-7212946.jpeg",
+      "category": "gallery_photo",
+      "description": "Group of people working around laptops, placeholder for gallery"
+    }
+  ],
+  "motion": {
+    "hover": "Hovering interactive elements should shift background colors slightly (e.g., from orange-500 to orange-600) and scale up slightly without aggressive bounce.",
+    "upload_progress": "Smooth width transition on the progress bar (transition-all duration-300 ease-out) styled with the primary orange.",
+    "toast": "Use sonner for toast notifications on save/success sliding in smoothly from the bottom right."
+  },
+  "accessibility": {
+    "focus": "All form inputs and buttons must have focus:ring-2 focus:ring-primary focus:outline-none.",
+    "contrast": "Text over background must maintain a high contrast ratio. Gray-400 for secondary text and Gray-100 for primary text.",
+    "aria": "Use aria-labels for icon buttons (like image deletion) and inputs."
+  },
+  "instructions_to_main_agent": [
+    "Force dark mode by replacing the :root and .dark variables in index.css with the ones provided in css_variables_update.",
+    "Apply the requested background colors #0a0a20 (background) and #16162a (card) effectively. Do not use generic full-screen gradients.",
+    "Use 'Noto Sans Georgian' for Georgian text display and set it in the font-family of the body.",
+    "Ensure the UI language is Georgian: 'რეგისტრაცია' (Registration), 'ავტორიზაცია' (Login), 'პროფილი' (Profile), 'გალერეა' (Gallery), 'პარამეტრები' (Settings), 'შენახვა' (Save).",
+    "Implement the 'upload progress' in the media gallery visually using a mock progress bar or a Shadcn Progress component.",
+    "Implement data-testid attributes on all interactive elements (buttons, inputs, tabs)."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Create depth through layered design elements with z-index hierarchy and subtle shadows, even on dark themes.",
+    "NEVER use fully transparent backgrounds for components like dropdowns, modals, or sticky headers. Ensure content beneath them does not bleed through.",
+    "NEVER use generic centered layouts for dashboards. Left-align text inputs and forms. Center-align only for landing heroes or specific artistic choices.",
+    "All interactive elements MUST include a data-testid attribute in kebab-case.",
+    "Do not use transition: all globally. Use targeted transitions like transition-colors or transition-transform."
+  ]
+}
