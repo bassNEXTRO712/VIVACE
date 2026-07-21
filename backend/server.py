@@ -197,6 +197,13 @@ class CodeConfirm(BaseModel):
 class ChatMessageInput(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
 
+class ReviewInput(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    text: str = Field(default="", max_length=2000)
+
+class CommentInput(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
 def company_card(doc: dict) -> dict:
     return {
         "id": doc.get("id"),
@@ -219,8 +226,19 @@ def user_response(user: dict, company_id=None) -> dict:
     return {
         "id": user["id"], "email": user["email"], "name": user["name"],
         "phone": user.get("phone", ""), "role": user.get("role", "user"),
+        "avatar_url": user.get("avatar_url", ""),
+        "email_verified": user.get("email_verified", False),
         "company_id": company_id,
     }
+
+async def _send_email_code(user_id: str, email: str, field: str, purpose: str):
+    code = gen_code()
+    await db.verifications.delete_many({"user_id": user_id, "field": field})
+    await db.verifications.insert_one({
+        "user_id": user_id, "field": field, "new_value": email, "code": code,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+    })
+    await send_verification_email(email, code, purpose)
 
 # ---------------------------------------------------------------------------
 # Auth endpoints
@@ -235,7 +253,7 @@ async def register(data: RegisterInput):
     now = datetime.now(timezone.utc).isoformat()
     user_doc = {
         "id": user_id, "email": email, "name": data.name,
-        "phone": "", "role": role,
+        "phone": "", "role": role, "avatar_url": "", "email_verified": False,
         "password_hash": hash_password(data.password), "created_at": now,
     }
     await db.users.insert_one(user_doc)
@@ -246,10 +264,27 @@ async def register(data: RegisterInput):
             "id": company_id, "owner_id": user_id, "name": data.name, "email": email,
             "phone": "", "address": "", "country": "", "service_cities": [],
             "description": "", "logo_url": "", "cover_url": "",
-            "media": [], "created_at": now, "updated_at": now,
+            "media": [], "views": 0, "created_at": now, "updated_at": now,
         })
+    await _send_email_code(user_id, email, "email_verify", "დაადასტურეთ თქვენი მეილი")
     token = create_access_token(user_id, email)
     return {"token": token, "user": user_response(user_doc, company_id)}
+
+@api_router.post("/auth/verify-email")
+async def verify_email(data: CodeConfirm, user: dict = Depends(get_current_user)):
+    v = await db.verifications.find_one({"user_id": user["id"], "field": "email_verify", "code": data.code})
+    if not v:
+        raise HTTPException(status_code=400, detail="არასწორი კოდი")
+    if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
+    await db.verifications.delete_many({"user_id": user["id"], "field": "email_verify"})
+    return {"status": "მეილი დადასტურდა"}
+
+@api_router.post("/auth/resend-verification")
+async def resend_verification(user: dict = Depends(get_current_user)):
+    await _send_email_code(user["id"], user["email"], "email_verify", "დაადასტურეთ თქვენი მეილი")
+    return {"status": "კოდი ხელახლა გაიგზავნა"}
 
 @api_router.post("/auth/login")
 async def login(data: LoginInput):
@@ -322,12 +357,69 @@ async def get_my_company(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
     return company
 
+async def rating_stats(company_id: str) -> dict:
+    docs = await db.reviews.find({"company_id": company_id}, {"_id": 0, "rating": 1}).to_list(5000)
+    count = len(docs)
+    avg = round(sum(d["rating"] for d in docs) / count, 1) if count else 0
+    return {"rating_avg": avg, "review_count": count}
+
 @api_router.get("/company/{company_id}")
 async def get_company(company_id: str):
-    company = await db.companies.find_one({"id": company_id}, {"_id": 0})
+    company = await db.companies.find_one({"id": company_id})
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
-    return public_company(company)
+    await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
+    company["views"] = company.get("views", 0) + 1
+    company = public_company(company)
+    company.update(await rating_stats(company_id))
+    return company
+
+@api_router.get("/company/{company_id}/reviews")
+async def get_reviews(company_id: str):
+    docs = await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    stats = await rating_stats(company_id)
+    return {"reviews": docs, **stats}
+
+@api_router.post("/company/{company_id}/reviews")
+async def add_review(company_id: str, data: ReviewInput, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"id": company_id}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
+    if company["owner_id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="საკუთარ პროფილს ვერ შეაფასებთ")
+    now = datetime.now(timezone.utc).isoformat()
+    existing = await db.reviews.find_one({"company_id": company_id, "user_id": user["id"]})
+    if existing:
+        await db.reviews.update_one(
+            {"company_id": company_id, "user_id": user["id"]},
+            {"$set": {"rating": data.rating, "text": data.text, "created_at": now}},
+        )
+    else:
+        await db.reviews.insert_one({
+            "id": str(uuid.uuid4()), "company_id": company_id,
+            "user_id": user["id"], "user_name": user["name"],
+            "rating": data.rating, "text": data.text, "created_at": now,
+        })
+    return await get_reviews(company_id)
+
+@api_router.get("/company/{company_id}/media/{media_id}/comments")
+async def get_photo_comments(company_id: str, media_id: str):
+    docs = await db.photo_comments.find(
+        {"company_id": company_id, "media_id": media_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    return docs
+
+@api_router.post("/company/{company_id}/media/{media_id}/comments")
+async def add_photo_comment(company_id: str, media_id: str, data: CommentInput, user: dict = Depends(get_current_user)):
+    comment = {
+        "id": str(uuid.uuid4()), "company_id": company_id, "media_id": media_id,
+        "user_id": user["id"], "user_name": user["name"],
+        "avatar_url": user.get("avatar_url", ""),
+        "text": data.text, "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.photo_comments.insert_one(comment)
+    comment.pop("_id", None)
+    return comment
 
 @api_router.put("/company/{company_id}")
 async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depends(get_current_user)):
@@ -406,6 +498,13 @@ async def delete_media(company_id: str, media_id: str, user: dict = Depends(get_
         raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
     await db.companies.update_one({"id": company_id}, {"$pull": {"media": {"id": media_id}}})
     return {"status": "deleted"}
+
+@api_router.post("/account/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    path, _, _ = await _upload_to_storage(user["id"], file, IMAGE_EXTS, MAX_IMAGE_SIZE)
+    url = f"/api/files/{path}"
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": url}})
+    return {"url": url}
 
 @api_router.get("/files/{path:path}")
 async def serve_file(path: str):
@@ -508,7 +607,13 @@ async def list_companies(country: Optional[str] = None, city: Optional[str] = No
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
     docs = await db.companies.find(query).to_list(1000)
-    return [company_card(d) for d in docs]
+    cards = []
+    for d in docs:
+        card = company_card(d)
+        card.update(await rating_stats(d["id"]))
+        card["views"] = d.get("views", 0)
+        cards.append(card)
+    return cards
 
 @api_router.get("/companies-countries")
 async def companies_countries():
