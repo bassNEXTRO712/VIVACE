@@ -183,7 +183,7 @@ class CodeConfirm(BaseModel):
     code: str
 
 class ChatMessageInput(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=2000)
 
 def company_card(doc: dict) -> dict:
     return {
