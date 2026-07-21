@@ -47,7 +47,8 @@ const VerifyRoute = ({ children }) => {
 const PublicOnly = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user && !user.email_verified && user.role !== "admin") return <Navigate to="/verify-email" replace />;
+  if (user && user.role === "admin") return <Navigate to="/admin" replace />;
+  if (user && !user.email_verified) return <Navigate to="/verify-email" replace />;
   if (user) return <Navigate to="/dashboard" replace />;
   return children;
 };

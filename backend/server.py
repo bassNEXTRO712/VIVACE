@@ -72,13 +72,21 @@ def init_storage():
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
     key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data, timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.put(
+                f"{STORAGE_URL}/objects/{path}",
+                headers={"X-Storage-Key": key, "Content-Type": content_type},
+                data=data, timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            last_err = e
+            import time as _t
+            _t.sleep(0.5 * (attempt + 1))
+    raise last_err
 
 def get_object(path: str):
     key = init_storage()
