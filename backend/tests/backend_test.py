@@ -27,7 +27,7 @@ def rand_email():
 
 @pytest.fixture(scope="module")
 def creds(rand_email):
-    return {"name": "TEST Company", "email": rand_email, "password": "test123"}
+    return {"name": "TEST Company", "email": rand_email, "password": "test123", "role": "company"}
 
 
 @pytest.fixture(scope="module")

@@ -14,7 +14,7 @@ export const DEST_IMAGES = [
 ];
 
 export const HERO_IMAGE =
-  "https://images.unsplash.com/photo-1623784373624-26fb62d3076d?crop=entropy&cs=srgb&fm=jpg&q=85&w=2000";
+  "https://static.prod-images.emergentagent.com/jobs/2b6fe9a7-d8ff-4309-bb0e-2b0996d46492/images/7b3cfee188934e958493f7f2f254fe394ffa4419f9b8470dde4d72cb40ac39a7.jpeg";
 
 export function imageFor(key) {
   let h = 0;

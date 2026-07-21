@@ -58,7 +58,12 @@ export default function Login() {
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "შესვლა"}
             </Button>
           </form>
-          <p className="text-sm text-muted-foreground mt-6 text-center">
+          <p className="text-sm text-muted-foreground mt-4 text-center">
+            <Link to="/forgot-password" data-testid="forgot-password-link" className="text-primary hover:underline">
+              დაგავიწყდათ პაროლი?
+            </Link>
+          </p>
+          <p className="text-sm text-muted-foreground mt-3 text-center">
             არ გაქვთ ანგარიში?{" "}
             <Link to="/register" data-testid="go-register-link" className="text-primary hover:underline">
               რეგისტრაცია

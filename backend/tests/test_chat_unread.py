@@ -25,10 +25,10 @@ BASE_URL = os.environ.get(
 API = f"{BASE_URL}/api"
 
 
-def _register(name_prefix):
+def _register(name_prefix, role="user"):
     email = f"test_{name_prefix}_{uuid.uuid4().hex[:8]}@test.com"
     r = requests.post(f"{API}/auth/register",
-                      json={"name": f"TEST {name_prefix}", "email": email, "password": "test123"}, timeout=30)
+                      json={"name": f"TEST {name_prefix}", "email": email, "password": "test123", "role": role}, timeout=30)
     assert r.status_code == 200, r.text
     reg = r.json()
     return {"email": email, "token": reg["token"],
@@ -39,7 +39,7 @@ def _register(name_prefix):
 
 @pytest.fixture(scope="module")
 def owner():
-    o = _register("owner_ur")
+    o = _register("owner_ur", role="company")
     u = requests.put(f"{API}/company/{o['company_id']}",
                      json={"country": "Georgia", "service_cities": ["Tbilisi"],
                            "description": "TEST unread co"}, headers=o["headers"], timeout=30)

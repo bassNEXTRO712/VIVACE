@@ -157,10 +157,22 @@ class RegisterInput(BaseModel):
     name: str
     email: EmailStr
     password: str
+    role: str = "user"
 
 class LoginInput(BaseModel):
     email: EmailStr
     password: str
+
+class ForgotPasswordInput(BaseModel):
+    email: EmailStr
+
+class ResetPasswordInput(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
 
 class CompanyUpdate(BaseModel):
     name: Optional[str] = None
@@ -203,30 +215,41 @@ def public_company(doc: dict) -> dict:
     doc.pop("owner_id", None)
     return doc
 
+def user_response(user: dict, company_id=None) -> dict:
+    return {
+        "id": user["id"], "email": user["email"], "name": user["name"],
+        "phone": user.get("phone", ""), "role": user.get("role", "user"),
+        "company_id": company_id,
+    }
+
 # ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
 @api_router.post("/auth/register")
 async def register(data: RegisterInput):
     email = data.email.lower()
+    role = "company" if data.role == "company" else "user"
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="ეს მეილი უკვე რეგისტრირებულია")
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    await db.users.insert_one({
+    user_doc = {
         "id": user_id, "email": email, "name": data.name,
-        "phone": "", "role": "company",
+        "phone": "", "role": role,
         "password_hash": hash_password(data.password), "created_at": now,
-    })
-    company_id = str(uuid.uuid4())
-    await db.companies.insert_one({
-        "id": company_id, "owner_id": user_id, "name": data.name, "email": email,
-        "phone": "", "address": "", "country": "", "service_cities": [],
-        "description": "", "logo_url": "", "cover_url": "",
-        "media": [], "created_at": now, "updated_at": now,
-    })
+    }
+    await db.users.insert_one(user_doc)
+    company_id = None
+    if role == "company":
+        company_id = str(uuid.uuid4())
+        await db.companies.insert_one({
+            "id": company_id, "owner_id": user_id, "name": data.name, "email": email,
+            "phone": "", "address": "", "country": "", "service_cities": [],
+            "description": "", "logo_url": "", "cover_url": "",
+            "media": [], "created_at": now, "updated_at": now,
+        })
     token = create_access_token(user_id, email)
-    return {"token": token, "user": {"id": user_id, "email": email, "name": data.name, "phone": "", "company_id": company_id}}
+    return {"token": token, "user": user_response(user_doc, company_id)}
 
 @api_router.post("/auth/login")
 async def login(data: LoginInput):
@@ -236,14 +259,58 @@ async def login(data: LoginInput):
         raise HTTPException(status_code=401, detail="არასწორი მეილი ან პაროლი")
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
     token = create_access_token(user["id"], email)
-    return {"token": token, "user": {"id": user["id"], "email": email, "name": user["name"],
-            "phone": user.get("phone", ""), "company_id": company["id"] if company else None}}
+    return {"token": token, "user": user_response(user, company["id"] if company else None)}
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    return {"id": user["id"], "email": user["email"], "name": user["name"],
-            "phone": user.get("phone", ""), "company_id": company["id"] if company else None}
+    return user_response(user, company["id"] if company else None)
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(data: ForgotPasswordInput):
+    email = data.email.lower()
+    user = await db.users.find_one({"email": email})
+    if user:
+        code = gen_code()
+        await db.password_resets.delete_many({"email": email})
+        await db.password_resets.insert_one({
+            "email": email, "code": code,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        })
+        await send_verification_email(email, code, "პაროლის აღდგენის კოდი")
+    return {"status": "თუ ეს მეილი რეგისტრირებულია, კოდი გაიგზავნა"}
+
+@api_router.post("/auth/reset-password")
+async def reset_password(data: ResetPasswordInput):
+    email = data.email.lower()
+    rec = await db.password_resets.find_one({"email": email, "code": data.code})
+    if not rec:
+        raise HTTPException(status_code=400, detail="არასწორი კოდი")
+    if datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="პაროლი მინიმუმ 6 სიმბოლო")
+    await db.users.update_one({"email": email}, {"$set": {"password_hash": hash_password(data.new_password)}})
+    await db.password_resets.delete_many({"email": email})
+    return {"status": "პაროლი აღდგენილია"}
+
+@api_router.put("/auth/profile")
+async def update_profile(data: UserUpdate, user: dict = Depends(get_current_user)):
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+        if "name" in updates:
+            await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"name": updates["name"]}})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    return user_response(fresh, company["id"] if company else None)
+
+@api_router.get("/stats")
+async def stats():
+    companies = await db.companies.count_documents({})
+    users = await db.users.count_documents({})
+    countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
+    return {"companies": companies, "users": users, "countries": len(countries)}
 
 # ---------------------------------------------------------------------------
 # Company profile endpoints
@@ -400,6 +467,29 @@ async def confirm_change(data: CodeConfirm, user: dict = Depends(get_current_use
         await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": v["new_value"]}})
     await db.verifications.delete_many({"user_id": user["id"], "field": v["field"]})
     return {"status": "ცვლილება დადასტურდა", "field": v["field"], "value": v["new_value"]}
+
+@api_router.post("/account/request-deletion")
+async def request_deletion(user: dict = Depends(get_current_user)):
+    await _create_verification(user["id"], "delete", "1", user["email"],
+                               "დაადასტურეთ ანგარიშის სამუდამო წაშლა")
+    return {"status": "ანგარიშის წაშლის კოდი გაიგზავნა თქვენს მეილზე"}
+
+@api_router.post("/account/confirm-deletion")
+async def confirm_deletion(data: CodeConfirm, user: dict = Depends(get_current_user)):
+    v = await db.verifications.find_one({"user_id": user["id"], "field": "delete", "code": data.code})
+    if not v:
+        raise HTTPException(status_code=400, detail="არასწორი კოდი")
+    if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
+    companies = await db.companies.find({"owner_id": user["id"]}, {"_id": 0, "id": 1}).to_list(100)
+    company_ids = [c["id"] for c in companies]
+    await db.companies.delete_many({"owner_id": user["id"]})
+    if company_ids:
+        await db.messages.delete_many({"company_id": {"$in": company_ids}})
+    await db.messages.delete_many({"visitor_id": user["id"]})
+    await db.verifications.delete_many({"user_id": user["id"]})
+    await db.users.delete_one({"id": user["id"]})
+    return {"status": "ანგარიში წაიშალა"}
 
 # ---------------------------------------------------------------------------
 # App wiring

@@ -48,7 +48,7 @@ export default function ProfileEditor({ company, onUpdate }) {
     const c = countries.find((x) => x.isoCode === iso);
     setCountryIso(iso);
     set("country", c?.name || "");
-    setCities([]);
+    setCitySearch("");
   };
 
   const addCity = (name) => {

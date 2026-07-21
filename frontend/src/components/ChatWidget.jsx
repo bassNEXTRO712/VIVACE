@@ -7,10 +7,9 @@ import { requestNotifyPermission, notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function ChatWidget({ companyId, companyName, isOwner }) {
+export default function ChatWidget({ companyId, companyName, isOwner, open, setOpen }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);

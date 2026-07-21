@@ -10,6 +10,7 @@ export default function Home() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState({});
+  const [stats, setStats] = useState({ companies: 0, users: 0, countries: 0 });
   const [focused, setFocused] = useState(false);
   const boxRef = useRef();
 
@@ -26,6 +27,7 @@ export default function Home() {
       res.data.forEach((r) => (map[r.country] = r.count));
       setCounts(map);
     });
+    api.get("/stats").then((res) => setStats(res.data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -58,12 +60,6 @@ export default function Home() {
     }
     return { countries: mc, cities: mci };
   }, [query, countries, allCities, isoToName]);
-
-  const totalCompanies = useMemo(
-    () => Object.values(counts).reduce((a, b) => a + b, 0),
-    [counts]
-  );
-  const activeCountries = Object.keys(counts).length;
 
   const goCountry = (name) => navigate(`/country/${encodeURIComponent(name)}`);
   const goCity = (country, city) =>
@@ -130,21 +126,21 @@ export default function Home() {
           </div>
 
           {/* Stats */}
-          <div className="flex items-center justify-center gap-8 mt-10 text-sm">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 mt-10 text-sm">
+            <div className="flex items-center gap-2" data-testid="stat-companies">
               <Building2 className="w-4 h-4 text-primary" />
-              <span className="font-semibold">{totalCompanies}</span>
-              <span className="text-muted-foreground">კომპანია</span>
+              <span className="font-semibold text-base">{stats.companies}</span>
+              <span className="text-muted-foreground">დარეგისტრირებული კომპანია</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Globe2 className="w-4 h-4 text-primary" />
-              <span className="font-semibold">{activeCountries}</span>
-              <span className="text-muted-foreground">ქვეყანა</span>
-            </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" data-testid="stat-users">
               <Users className="w-4 h-4 text-primary" />
-              <span className="font-semibold">{countries.length}</span>
-              <span className="text-muted-foreground">მიმართულება</span>
+              <span className="font-semibold text-base">{stats.users}</span>
+              <span className="text-muted-foreground">მომხმარებელი</span>
+            </div>
+            <div className="flex items-center gap-2" data-testid="stat-countries">
+              <Globe2 className="w-4 h-4 text-primary" />
+              <span className="font-semibold text-base">{stats.countries}</span>
+              <span className="text-muted-foreground">აქტიური ქვეყანა</span>
             </div>
           </div>
         </section>

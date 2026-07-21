@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 4 tested new features: password reset, role-based registration (user vs company), role-based dashboard, user profile edit, multi-country service cities, send-message-button on public profile, account deletion (request + wrong-code 400), home stats. Backend: created /app/backend/tests/test_iteration4.py with 16 new pytest cases (role registration 3, forgot/reset password 4, user profile edit 2, stats 2, account deletion 4, service cities 1) — all pass. Also fixed 3 pre-existing regression files that were registering without role='company' after backend default changed to 'user' (backend_test.py, test_directory_and_chat.py, test_chat_unread.py). Full suite 65/65 pass. Frontend: Playwright covered — home stats visible (companies=55, users=91, countries=3), forgot-password link works and wrong code stays on page (400), role-user registration navigates to USER dashboard (only tab-profile + tab-settings, NO gallery/messages), user profile save works, request-delete + wrong-code stays on dashboard, curltest login shows company dashboard (gallery + messages present), ProfileEditor: add Kutaisi under Georgia -> switch country to France (badges persist) -> add Paris (multi-country) -> X-remove works, owner's own /company/{id} does NOT show profile-message-button, non-owner user_role sees it, clicking opens chat widget, sending message shows message. No JS console errors observed. No bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/backend/tests/test_chat_unread.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_iteration4.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py getting long (652 lines) — auth, company, chat, media, deletion all in one file; consider splitting into routers/ subpackage before it doubles.",
+    "reset_password validates min-length AFTER code check, which is correct order, but forgot_password.forgot_password_unknown_email still calls send_verification_email path with no user (skipped correctly) — no info leak. Good.",
+    "confirm_deletion deletes messages by company_id AND visitor_id but does NOT delete password_resets records for that email — leaves orphans (minor cleanup issue, no security impact).",
+    "ProfileEditor cities: onCountry() no longer clears cities (correct fix). However availableCities filter uses !cities.includes(name) — if a city with the same name exists in multiple countries (e.g., Paris in TX and Paris FR), user can never add the second one. Edge case, low priority.",
+    "ChatWidget subscription uses `open` in dep array so on every widget close the poll effect re-runs, but the poll interval only starts if !isOwner && user — actually the poll effect only depends on [user, companyId, isOwner], not open, which is correct. Good.",
+    "Dashboard.jsx: `prevUnread.current` starts at 0 so the very first poll that returns count>0 fires a notification even on fresh page-load. Minor UX nit; iteration 3 comment already noted the visitor side is guarded; company side is not.",
+    "No indexes on db.password_resets or db.verifications by email/user_id — fine for now but every code lookup does a full-collection scan."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/backend/tests/test_chat_unread.py"
+  ],
+  "success_rate": {"backend": "100% (65/65, 16/16 new)", "frontend": "100% (all 8 scripted flows)"},
+  "test_credentials": "Used curltest@test.com/test123 (company, Georgia) and user_role@test.com/test123 (user). Test-created accounts prefixed test_* by pytest and test-<rand>@test.com by UI (one such UI user still exists: test-5d3e56@test.com with name 'Renamed 5d3e56', dashboard-side delete was NOT completed since only wrong code was tried).",
+  "seed_data_creation": "UI created 1 throwaway user test-5d3e56@test.com. Sent 1 UI chat message 'UI test msg 92e4bb' from user_role to curltest. curltest company still has service_cities=[Tbilisi, Batumi] and country=Georgia (Kutaisi added and removed, Paris added and removed, France change not saved).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite is now 4 files (backend_test.py, test_directory_and_chat.py, test_chat_unread.py, test_iteration4.py) — all registrations now explicitly pass role='company' where a company is needed since backend default changed to role='user'. Run: `pytest /app/backend/tests/ --junitxml=/app/test_reports/pytest/pytest_results.xml`. pytest.ini uses -n 2 --dist loadscope. If future changes touch /auth/register default role, only the 3 fixture files need editing. Frontend data-testids exercised in this iteration: stat-companies/users/countries, forgot-password-link, forgot-email-input, forgot-request-button, forgot-code-input, forgot-password-input, forgot-reset-button, role-user-button, role-company-button, register-*-input, register-submit-button, tab-profile/settings/gallery/messages, user-name-input, save-user-profile-button, profile-country-select, profile-city-search, city-option, city-badge (+ its remove button 'button[aria-label=remove]'), profile-message-button, chat-message-input, chat-send-button, request-delete-button, delete-code-input, confirm-delete-account-button, nav-home-button, view-public-button, logout-button. Note: shadcn Select options are picked by page.get_by_role('option', name='🇬🇪 Georgia') — do NOT try to type-search inside the select trigger.",
+  "rca_of_the_issue": "N/A — no bugs. Only pre-existing regression fixtures needed to be updated to send role='company' after backend RegisterInput default flipped from company to user in this iteration."
+}

@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, Mail, Phone, KeyRound } from "lucide-react";
+import { Loader2, Mail, Phone, KeyRound, Trash2, AlertTriangle } from "lucide-react";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -121,6 +122,69 @@ function PasswordChange() {
   );
 }
 
+function DeleteAccount() {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const [stage, setStage] = useState("idle"); // idle | verify
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const request = async () => {
+    setLoading(true);
+    try {
+      await api.post("/account/request-deletion");
+      setStage("verify");
+      toast.success("წაშლის კოდი გაიგზავნა თქვენს მეილზე");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirm = async () => {
+    setLoading(true);
+    try {
+      await api.post("/account/confirm-deletion", { code });
+      toast.success("ანგარიში წაიშალა");
+      logout();
+      navigate("/");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-card border border-destructive/40 rounded-lg p-6 space-y-4">
+      <div className="flex items-center gap-2 text-destructive">
+        <AlertTriangle className="w-5 h-5" />
+        <h3 className="font-medium">ანგარიშის წაშლა</h3>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        ეს მოქმედება შეუქცევადია — წაიშლება თქვენი ანგარიში, პროფილი, მედია და მიმოწერა.
+      </p>
+      {stage === "idle" ? (
+        <Button data-testid="request-delete-button" variant="destructive" onClick={request} disabled={loading}
+          className="bg-destructive hover:bg-red-700">
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Trash2 className="w-4 h-4 mr-2" /> ანგარიშის წაშლა</>}
+        </Button>
+      ) : (
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Input data-testid="delete-code-input" value={code} onChange={(e) => setCode(e.target.value)}
+            placeholder="6-ნიშნა კოდი" maxLength={6} />
+          <Button data-testid="confirm-delete-account-button" variant="destructive" onClick={confirm}
+            disabled={loading} className="bg-destructive hover:bg-red-700 whitespace-nowrap">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "წაშლის დადასტურება"}
+          </Button>
+          <Button variant="ghost" onClick={() => setStage("idle")}>გაუქმება</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AccountSettings() {
   const { user, setUser } = useAuth();
 
@@ -135,6 +199,7 @@ export default function AccountSettings() {
       <ContactChange kind="phone" label="ტელეფონის შეცვლა" icon={Phone}
         currentValue={user?.phone} onDone={onDone} />
       <PasswordChange />
+      <DeleteAccount />
     </div>
   );
 }

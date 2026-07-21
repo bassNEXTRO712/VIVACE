@@ -25,7 +25,7 @@ def owner():
     """Fresh company owner with country=Georgia."""
     email = f"test_owner_{uuid.uuid4().hex[:8]}@test.com"
     r = requests.post(f"{API}/auth/register",
-                      json={"name": "TEST Owner Co", "email": email, "password": "test123"}, timeout=30)
+                      json={"name": "TEST Owner Co", "email": email, "password": "test123", "role": "company"}, timeout=30)
     assert r.status_code == 200, r.text
     reg = r.json()
     headers = {"Authorization": f"Bearer {reg['token']}"}

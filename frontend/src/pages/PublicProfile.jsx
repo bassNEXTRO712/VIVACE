@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film } from "lucide-react";
+import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film, MessageCircle } from "lucide-react";
 import api, { fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import Header from "@/components/Header";
 import ChatWidget from "@/components/ChatWidget";
 
@@ -13,6 +14,7 @@ export default function PublicProfile() {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
     api
@@ -52,7 +54,7 @@ export default function PublicProfile() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 -mt-16 relative z-10">
-        <div className="flex items-end gap-5">
+        <div className="flex flex-wrap items-end gap-5">
           <div className="w-28 h-28 rounded-xl overflow-hidden bg-card border-2 border-border shadow-lg flex-shrink-0">
             {company.logo_url ? (
               <img src={fileUrl(company.logo_url)} alt="logo" className="w-full h-full object-cover" />
@@ -62,7 +64,7 @@ export default function PublicProfile() {
               </div>
             )}
           </div>
-          <div className="pb-2">
+          <div className="pb-2 flex-1">
             <h1 className="text-3xl font-bold">{company.name}</h1>
             {company.country && (
               <p className="text-muted-foreground flex items-center gap-1 mt-1">
@@ -70,6 +72,12 @@ export default function PublicProfile() {
               </p>
             )}
           </div>
+          {user?.company_id !== company.id && (
+            <Button data-testid="profile-message-button" onClick={() => setChatOpen(true)}
+              className="bg-primary hover:bg-orange-600 transition-colors mb-2">
+              <MessageCircle className="w-4 h-4 mr-2" /> შეტყობინების გაგზავნა
+            </Button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
@@ -136,7 +144,7 @@ export default function PublicProfile() {
         <div className="h-16" />
       </div>
       <ChatWidget companyId={company.id} companyName={company.name}
-        isOwner={user?.company_id === company.id} />
+        isOwner={user?.company_id === company.id} open={chatOpen} setOpen={setChatOpen} />
     </div>
   );
 }
