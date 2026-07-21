@@ -546,6 +546,9 @@ async def startup():
         await db.users.create_index("id", unique=True)
         await db.companies.create_index("id", unique=True)
         await db.companies.create_index("owner_id")
+        await db.companies.create_index("country")
+        await db.messages.create_index("company_id")
+        await db.messages.create_index("visitor_id")
     except Exception as e:
         logger.error(f"Index creation failed: {e}")
     try:
