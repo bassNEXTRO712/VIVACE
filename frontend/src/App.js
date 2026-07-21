@@ -12,6 +12,7 @@ import ForgotPassword from "@/pages/ForgotPassword";
 import VerifyEmail from "@/pages/VerifyEmail";
 import Policy from "@/pages/Policy";
 import AdminPanel from "@/pages/AdminPanel";
+import SupportChat from "@/components/SupportChat";
 import { Loader2 } from "lucide-react";
 
 const Spinner = () => (
@@ -25,7 +26,6 @@ const ProtectedRoute = ({ children }) => {
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== "admin" && !user.email_verified) return <Navigate to="/verify-email" replace />;
-  if (user.role === "admin") return <Navigate to="/admin" replace />;
   return children;
 };
 
@@ -47,8 +47,7 @@ const VerifyRoute = ({ children }) => {
 const PublicOnly = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user && user.role === "admin") return <Navigate to="/admin" replace />;
-  if (user && !user.email_verified) return <Navigate to="/verify-email" replace />;
+  if (user && !user.email_verified && user.role !== "admin") return <Navigate to="/verify-email" replace />;
   if (user) return <Navigate to="/dashboard" replace />;
   return children;
 };
@@ -70,6 +69,7 @@ function App() {
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/admin" element={<AdminRoute><AdminPanel /></AdminRoute>} />
           </Routes>
+          <SupportChat />
         </BrowserRouter>
         <Toaster position="bottom-right" richColors />
       </AuthProvider>

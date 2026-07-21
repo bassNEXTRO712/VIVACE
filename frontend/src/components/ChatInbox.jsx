@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Send, Loader2, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
+import { formatTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -11,6 +12,8 @@ export default function ChatInbox() {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [peerTyping, setPeerTyping] = useState(false);
+  const lastTypingSent = useRef(0);
   const endRef = useRef();
 
   const loadInbox = async () => {
@@ -26,7 +29,18 @@ export default function ChatInbox() {
     try {
       const { data } = await api.get(`/chat/inbox/${visitorId}/messages`);
       setMessages(data);
+      const ts = await api.get(`/chat/inbox/${visitorId}/typing`);
+      setPeerTyping(ts.data.typing);
     } catch (_) {}
+  };
+
+  const onType = (v) => {
+    setText(v);
+    const now = Date.now();
+    if (active && now - lastTypingSent.current > 2500) {
+      lastTypingSent.current = now;
+      api.post(`/chat/inbox/${active.visitor_id}/typing`).catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -116,7 +130,7 @@ export default function ChatInbox() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map((m) => (
-                <div key={m.id} className={`flex ${m.sender === "company" ? "justify-end" : "justify-start"}`}>
+                <div key={m.id} className={`flex flex-col ${m.sender === "company" ? "items-end" : "items-start"}`}>
                   <div className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${
                     m.sender === "company"
                       ? "bg-primary text-primary-foreground rounded-br-none"
@@ -124,13 +138,19 @@ export default function ChatInbox() {
                   }`}>
                     {m.text}
                   </div>
+                  <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
                 </div>
               ))}
+              {peerTyping && (
+                <div className="flex justify-start">
+                  <div className="bg-secondary text-muted-foreground rounded-lg rounded-bl-none px-3 py-2 text-xs" data-testid="typing-indicator">წერს...</div>
+                </div>
+              )}
               <div ref={endRef} />
             </div>
             <div className="p-3 border-t border-border flex gap-2">
               <Input data-testid="inbox-message-input" value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => onType(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
                 placeholder="პასუხის დაწერა..." />
               <Button data-testid="inbox-send-button" size="icon" onClick={send} disabled={sending}

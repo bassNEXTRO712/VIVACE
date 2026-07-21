@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 6 backend+frontend testing. Backend: added /app/backend/tests/test_iteration6.py with 23 pytest cases covering the new iteration-6 additions — admin auth gate (5x 403), admin stats OK, block/unblock user (including support-send 403 when blocked), cannot-block-admin 400, admin edit user (name+password change verified via login), password<6 -> 400, verify company toggle reflected on GET /company/{id} and GET /companies?country=, support user->admin and admin->user thread, non-admin can't reply, admin notifications (support + new-regs) + /admin/seen, ads create/list/delete + public /ads + non-admin 403, typing bidirectional + 5s expiry, generic /upload + photo comment with image_url + avatar_url on payload + empty comment 400 + upload requires auth, review carries avatar_url. All 23/23 pass. Full regression 111/112 (1 flaky 503 from Emergent object storage during test_iteration5.py::TestAvatar::test_avatar_upload_sets_user_url — retry passed). Frontend Playwright: confirmed a CRITICAL admin-login redirect regression (see below). Support widget send/receive verified for regular user (user_verified@test.com): support-open-button on Home OK, support-message-input + support-send-button post a message that appears in the widget. notification-bell renders for non-admin on Home. Verified via backend GET /api/companies that exactly 1 company is currently verified. Regression: user login -> /dashboard OK; typing endpoints return {typing:true/false} correctly and expire.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/account/avatar (PUT via /api/files/... object store)", "issue": "Occasional 503 Service Unavailable from https://integrations.emergentagent.com/objstore during avatar upload. Retry passes. Consider retry-on-503 in put_object() with backoff (max 2 retries)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AdminRoute / Login redirect",
+        "issue": "CRITICAL: Admin login race condition — Login.submit() calls navigate('/admin'), URL briefly becomes /admin (AdminPanel mounts and calls /admin/stats|users|companies) but within ~500ms is REPLACED with /dashboard, causing admin to land on the Dashboard (in user-profile mode, showing VIVACE OFFICIAL) instead of AdminPanel. Reproduced 3/3 times with framenavigated log: `-> /admin`, then `-> /dashboard`. Because AdminPanel unmounts before user can interact, no admin panel functionality (tabs users/companies/support/ads, verify/block/edit/delete, ads create) is reachable via the login flow. nav-admin link from Header (visible only if user.role==='admin' on other pages) may still work as a workaround but was not exercised.",
+        "selector": "/admin route lifecycle",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/backend/tests/test_iteration5.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/backend/tests/test_chat_unread.py",
+    "/app/test_reports/pytest/pytest_iteration6.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix admin-login redirect regression. Root cause is very likely the <PublicOnly> wrapper around <Login> (App.js line 47-53). After login() sets user, PublicOnly re-renders with user=admin/email_verified=true and returns <Navigate to='/dashboard' replace/>, which fires in the SAME render cycle as navigate('/admin') from Login.submit(), and the /dashboard replace wins after the /admin push. Suggested fix: in PublicOnly, when user.role==='admin' redirect to '/admin', OR in Login.submit() DO NOT call navigate() at all and instead let the router-level PublicOnly handle role-based redirect (add an admin branch). Simplest: `if (user && user.role === 'admin') return <Navigate to='/admin' replace/>;` BEFORE the generic /dashboard fallback in PublicOnly.",
+    "MINOR: Add retry-on-503 in put_object() (server.py L74) for transient Emergent object storage flakes."
+  ],
+  "critical_code_review_comments": [
+    "App.js PublicOnly does not consider admin role — it always redirects logged-in users to /dashboard, causing the observed regression. Add admin branch: `if (user && user.role === 'admin') return <Navigate to='/admin' replace/>;`",
+    "server.py grew to 1093 lines with iteration-6 additions (typing, support, ads, admin edit/block/verify, notifications-admin branch). Strong candidate for splitting into `routers/{auth,company,media,chat,support,ads,admin,notifications}.py`.",
+    "admin_delete_company (L981) does not cascade delete support_messages or verifications for the deleted user; admin_delete_user (L963) doesn't clean photo_comments/support_messages/verifications either. Orphan rows accumulate.",
+    "Two identical helpers `_send_email_code` (L261) and `_create_verification` (L572) do essentially the same thing with slightly different signatures — DRY consolidation opportunity.",
+    "GET /company/{id} still increments views on every hit (no dedup by session/user) — carryover from iteration 5.",
+    "SupportChat polls /support/messages every 6s regardless of dialog open state and blocks eslint-disable-next-line — could use conditional polling."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py"
+  ],
+  "success_rate": {"backend": "100% (23/23 new; 111/112 full suite, 1 transient 503 that passed on retry)", "frontend": "~85% (support widget, notifications, verified count via API, regression user login OK; admin panel UI blocked by /admin -> /dashboard redirect regression)"},
+  "test_credentials": "Pre-verified: user_verified@test.com/test123, comp_verified@test.com/test123, roma@test.com/test123. Admin: nikaabrumia1985@gmail.com/NEXTRO2006NEXTRO. Throwaway registrations use pattern it6_<rand>@test.com.",
+  "seed_data_creation": "Backend tests created ~10 throwaway it6_* accounts (~7 user + 3 company). Ads test created + deleted an ad. Verify-company test created + deleted a company. Support test posted several messages from throwaway users to admin, admin replied to at least one. Photo comment test uploaded 1 media + 1 comment on comp_verified company. Review test may have (re)posted a 4-star review by user_verified on comp_verified. UI test posted 1 support message from user_verified to admin (still in DB).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite is now 6 files under /app/backend/tests/: backend_test.py, test_directory_and_chat.py, test_chat_unread.py, test_iteration4.py, test_iteration5.py, test_iteration6.py. Run: `cd /app && pytest backend/tests/ --junitxml=/app/test_reports/pytest/pytest_results.xml`. pytest.ini uses `-n 2 --dist loadscope`. Iteration-6 data-testids exercised via requests/DOM: support-open-button, support-message-input, support-send-button, support-close-button, notification-bell, notification-count (admin has count>0 due to prior test data), admin-tab-users/companies/support/ads (blocked by redirect bug), admin-user-row, admin-company-row, admin-edit-user, admin-edit-name/password/save (verified rendered when dialog is opened during pre-bug moment), admin-verify-company (backend verified via API), ad-title-input/upload-button/create-button/admin-ad-item/admin-ad-delete (rendered before redirect), verified-badge (only shown for the 1 verified company). AFTER MAIN AGENT FIXES the /admin redirect, RE-TEST full admin panel UI: create+delete ad, verify+unverify company, edit user name+password, block+unblock user, delete throwaway user with AlertDialog confirm, admin-tab-support opening a conversation and reply. Backend-side those operations already pass in test_iteration6.py.",
+  "rca_of_the_issue": "Admin login (Login.submit): after `await api.post('/auth/login')`, code does `login(token, data.user); ...; if (data.user.role === 'admin') navigate('/admin')`. `login()` calls setUser() (via AuthContext), which triggers a re-render of the still-mounted Login route. Its wrapper <PublicOnly> re-evaluates: `if (user) return <Navigate to='/dashboard' replace/>`. Because PublicOnly does NOT special-case admin, the <Navigate> replaces the URL with /dashboard. Simultaneously navigate('/admin') from the submit handler pushes /admin. The net observed sequence (via framenavigated event) is `/admin -> /dashboard`, i.e. the /dashboard replace/push takes effect AFTER /admin, unmounting AdminPanel. Reproduction: 3/3 fresh sessions with cleared localStorage. Mitigation: In App.js PublicOnly, add `if (user && user.role === 'admin') return <Navigate to='/admin' replace/>;` before the generic `if (user) return <Navigate to='/dashboard' replace/>;`. Alternative: in Login.submit(), skip navigate() and rely purely on PublicOnly with admin branch."
+}

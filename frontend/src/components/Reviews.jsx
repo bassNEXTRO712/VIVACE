@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Star, Loader2 } from "lucide-react";
-import api, { apiError } from "@/lib/api";
+import api, { apiError, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -88,8 +88,8 @@ export default function Reviews({ companyId, isOwner, onStats }) {
         <div className="space-y-4">
           {data.reviews.map((r) => (
             <div key={r.id} data-testid="review-item" className="flex gap-3">
-              <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sm font-semibold uppercase flex-shrink-0">
-                {(r.user_name || "?").charAt(0)}
+              <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sm font-semibold uppercase flex-shrink-0 overflow-hidden">
+                {r.avatar_url ? <img src={fileUrl(r.avatar_url)} alt="" className="w-full h-full object-cover" /> : (r.user_name || "?").charAt(0)}
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2">

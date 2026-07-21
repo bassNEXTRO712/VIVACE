@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { requestNotifyPermission, notify } from "@/lib/notify";
+import { formatTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -14,7 +15,9 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [peerTyping, setPeerTyping] = useState(false);
   const prevCompanyMsgs = useRef(0);
+  const lastTypingSent = useRef(0);
   const endRef = useRef();
 
   const load = async () => {
@@ -29,7 +32,20 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
       prevCompanyMsgs.current = companyMsgs.length;
       const un = data.filter((m) => m.sender === "company" && !m.read_by_visitor).length;
       setUnread(un);
+      if (open) {
+        const ts = await api.get(`/chat/${companyId}/typing`);
+        setPeerTyping(ts.data.typing);
+      }
     } catch (_) {}
+  };
+
+  const onType = (v) => {
+    setText(v);
+    const now = Date.now();
+    if (now - lastTypingSent.current > 2500) {
+      lastTypingSent.current = now;
+      api.post(`/chat/${companyId}/typing`).catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -110,7 +126,7 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
                   </p>
                 )}
                 {messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.sender === "visitor" ? "justify-end" : "justify-start"}`}>
+                  <div key={m.id} className={`flex flex-col ${m.sender === "visitor" ? "items-end" : "items-start"}`}>
                     <div className={`max-w-[75%] px-3 py-2 rounded-lg text-sm ${
                       m.sender === "visitor"
                         ? "bg-primary text-primary-foreground rounded-br-none"
@@ -118,13 +134,21 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
                     }`}>
                       {m.text}
                     </div>
+                    <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
                   </div>
                 ))}
+                {peerTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-secondary text-muted-foreground rounded-lg rounded-bl-none px-3 py-2 text-xs" data-testid="typing-indicator">
+                      წერს...
+                    </div>
+                  </div>
+                )}
                 <div ref={endRef} />
               </div>
               <div className="p-3 border-t border-border flex gap-2">
                 <Input data-testid="chat-message-input" value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  onChange={(e) => onType(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && send()}
                   placeholder="შეტყობინება..." />
                 <Button data-testid="chat-send-button" size="icon" onClick={send} disabled={sending}

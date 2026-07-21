@@ -207,7 +207,27 @@ class ReviewInput(BaseModel):
     text: str = Field(default="", max_length=2000)
 
 class CommentInput(BaseModel):
-    text: str = Field(..., min_length=1, max_length=1000)
+    text: str = Field(default="", max_length=1000)
+    image_url: str = Field(default="")
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+
+class BlockInput(BaseModel):
+    blocked: bool
+
+class VerifyInput(BaseModel):
+    verified: bool
+
+class SupportInput(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+
+class AdInput(BaseModel):
+    title: str = Field(default="", max_length=200)
+    link: str = Field(default="", max_length=500)
+    media_url: str
+    media_type: str = "image"
 
 def company_card(doc: dict) -> dict:
     return {
@@ -219,6 +239,7 @@ def company_card(doc: dict) -> dict:
         "description": doc.get("description", ""),
         "logo_url": doc.get("logo_url", ""),
         "cover_url": doc.get("cover_url", ""),
+        "verified": doc.get("verified", False),
         "media_count": len(doc.get("media", [])),
     }
 
@@ -233,6 +254,7 @@ def user_response(user: dict, company_id=None) -> dict:
         "phone": user.get("phone", ""), "role": user.get("role", "user"),
         "avatar_url": user.get("avatar_url", ""),
         "email_verified": user.get("email_verified", False),
+        "blocked": user.get("blocked", False),
         "company_id": company_id,
     }
 
@@ -259,6 +281,7 @@ async def register(data: RegisterInput):
     user_doc = {
         "id": user_id, "email": email, "name": data.name,
         "phone": "", "role": role, "avatar_url": "", "email_verified": False,
+        "blocked": False, "seen_by_admin": False,
         "password_hash": hash_password(data.password), "created_at": now,
     }
     await db.users.insert_one(user_doc)
@@ -268,7 +291,7 @@ async def register(data: RegisterInput):
         await db.companies.insert_one({
             "id": company_id, "owner_id": user_id, "name": data.name, "email": email,
             "phone": "", "address": "", "country": "", "service_cities": [],
-            "description": "", "logo_url": "", "cover_url": "",
+            "description": "", "logo_url": "", "cover_url": "", "verified": False,
             "media": [], "views": 0, "created_at": now, "updated_at": now,
         })
     await _send_email_code(user_id, email, "email_verify", "დაადასტურეთ თქვენი მეილი")
@@ -397,12 +420,14 @@ async def add_review(company_id: str, data: ReviewInput, user: dict = Depends(ge
     if existing:
         await db.reviews.update_one(
             {"company_id": company_id, "user_id": user["id"]},
-            {"$set": {"rating": data.rating, "text": data.text, "created_at": now}},
+            {"$set": {"rating": data.rating, "text": data.text, "created_at": now,
+                      "avatar_url": user.get("avatar_url", "")}},
         )
     else:
         await db.reviews.insert_one({
             "id": str(uuid.uuid4()), "company_id": company_id,
             "user_id": user["id"], "user_name": user["name"],
+            "avatar_url": user.get("avatar_url", ""),
             "rating": data.rating, "text": data.text, "created_at": now,
         })
     return await get_reviews(company_id)
@@ -416,15 +441,27 @@ async def get_photo_comments(company_id: str, media_id: str):
 
 @api_router.post("/company/{company_id}/media/{media_id}/comments")
 async def add_photo_comment(company_id: str, media_id: str, data: CommentInput, user: dict = Depends(get_current_user)):
+    if not data.text.strip() and not data.image_url:
+        raise HTTPException(status_code=400, detail="ცარიელი კომენტარი")
     comment = {
         "id": str(uuid.uuid4()), "company_id": company_id, "media_id": media_id,
         "user_id": user["id"], "user_name": user["name"],
         "avatar_url": user.get("avatar_url", ""),
-        "text": data.text, "created_at": datetime.now(timezone.utc).isoformat(),
+        "text": data.text, "image_url": data.image_url,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.photo_comments.insert_one(comment)
     comment.pop("_id", None)
     return comment
+
+@api_router.post("/upload")
+async def generic_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
+    is_video = ext in VIDEO_EXTS
+    allowed = VIDEO_EXTS if is_video else IMAGE_EXTS
+    max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
+    path, _, _ = await _upload_to_storage(user["id"], file, allowed, max_size)
+    return {"url": f"/api/files/{path}", "type": "video" if is_video else "image"}
 
 @api_router.put("/company/{company_id}")
 async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depends(get_current_user)):
@@ -634,6 +671,8 @@ async def companies_countries():
 # ---------------------------------------------------------------------------
 @api_router.post("/chat/{company_id}/messages")
 async def send_visitor_message(company_id: str, data: ChatMessageInput, user: dict = Depends(get_current_user)):
+    if user.get("blocked"):
+        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია")
     company = await db.companies.find_one({"id": company_id}, {"_id": 0})
     if not company:
         raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
@@ -732,11 +771,145 @@ async def root():
     return {"message": "Company Profile API"}
 
 # ---------------------------------------------------------------------------
+# Typing indicators
+# ---------------------------------------------------------------------------
+async def _set_typing(key: str):
+    until = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()
+    await db.typing.update_one({"key": key}, {"$set": {"key": key, "until": until}}, upsert=True)
+
+async def _get_typing(key: str) -> bool:
+    doc = await db.typing.find_one({"key": key})
+    if not doc:
+        return False
+    return datetime.fromisoformat(doc["until"]) > datetime.now(timezone.utc)
+
+@api_router.post("/chat/{company_id}/typing")
+async def visitor_typing(company_id: str, user: dict = Depends(get_current_user)):
+    await _set_typing(f"{company_id}:{user['id']}:visitor")
+    return {"ok": True}
+
+@api_router.get("/chat/{company_id}/typing")
+async def visitor_typing_status(company_id: str, user: dict = Depends(get_current_user)):
+    return {"typing": await _get_typing(f"{company_id}:{user['id']}:company")}
+
+@api_router.post("/chat/inbox/{visitor_id}/typing")
+async def company_typing(visitor_id: str, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if company:
+        await _set_typing(f"{company['id']}:{visitor_id}:company")
+    return {"ok": True}
+
+@api_router.get("/chat/inbox/{visitor_id}/typing")
+async def company_typing_status(visitor_id: str, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not company:
+        return {"typing": False}
+    return {"typing": await _get_typing(f"{company['id']}:{visitor_id}:visitor")}
+
+# ---------------------------------------------------------------------------
+# Support chat (with administration)
+# ---------------------------------------------------------------------------
+@api_router.post("/support/messages")
+async def support_send(data: SupportInput, user: dict = Depends(get_current_user)):
+    if user.get("blocked"):
+        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია")
+    msg = {
+        "id": str(uuid.uuid4()), "user_id": user["id"], "user_name": user["name"],
+        "avatar_url": user.get("avatar_url", ""), "sender": "user", "text": data.text,
+        "read_by_admin": False, "read_by_user": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.support_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+@api_router.get("/support/messages")
+async def support_thread(user: dict = Depends(get_current_user)):
+    await db.support_messages.update_many(
+        {"user_id": user["id"], "sender": "admin", "read_by_user": {"$ne": True}},
+        {"$set": {"read_by_user": True}},
+    )
+    return await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+
+@api_router.get("/support/inbox")
+async def support_inbox(admin: dict = Depends(require_admin)):
+    docs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    convos = {}
+    for m in docs:
+        uid = m["user_id"]
+        convos.setdefault(uid, {"user_id": uid, "user_name": m.get("user_name", "მომხმარებელი"),
+                                "avatar_url": m.get("avatar_url", ""), "unread": 0})
+        convos[uid]["last_text"] = m["text"]
+        convos[uid]["last_at"] = m["created_at"]
+        if m["sender"] == "user" and not m.get("read_by_admin", False):
+            convos[uid]["unread"] += 1
+    return sorted(convos.values(), key=lambda x: x.get("last_at", ""), reverse=True)
+
+@api_router.get("/support/inbox/{user_id}")
+async def support_conversation(user_id: str, admin: dict = Depends(require_admin)):
+    await db.support_messages.update_many(
+        {"user_id": user_id, "sender": "user", "read_by_admin": {"$ne": True}},
+        {"$set": {"read_by_admin": True}},
+    )
+    return await db.support_messages.find({"user_id": user_id}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+
+@api_router.post("/support/inbox/{user_id}")
+async def support_reply(user_id: str, data: SupportInput, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    msg = {
+        "id": str(uuid.uuid4()), "user_id": user_id,
+        "user_name": target["name"] if target else "მომხმარებელი", "avatar_url": "",
+        "sender": "admin", "text": data.text,
+        "read_by_admin": True, "read_by_user": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.support_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+# ---------------------------------------------------------------------------
+# Ads
+# ---------------------------------------------------------------------------
+@api_router.get("/ads")
+async def list_ads():
+    return await db.ads.find({"active": True}, {"_id": 0}).sort("created_at", -1).to_list(50)
+
+@api_router.post("/admin/ads")
+async def create_ad(data: AdInput, admin: dict = Depends(require_admin)):
+    ad = {"id": str(uuid.uuid4()), "title": data.title, "link": data.link,
+          "media_url": data.media_url, "media_type": data.media_type, "active": True,
+          "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.ads.insert_one(ad)
+    ad.pop("_id", None)
+    return ad
+
+@api_router.get("/admin/ads")
+async def admin_list_ads(admin: dict = Depends(require_admin)):
+    return await db.ads.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+@api_router.delete("/admin/ads/{ad_id}")
+async def delete_ad(ad_id: str, admin: dict = Depends(require_admin)):
+    await db.ads.delete_one({"id": ad_id})
+    return {"status": "deleted"}
+
+# ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
 @api_router.get("/notifications")
 async def notifications(user: dict = Depends(get_current_user)):
     items = []
+    if user.get("role") == "admin":
+        sup = await db.support_messages.find({"sender": "user", "read_by_admin": {"$ne": True}}, {"_id": 0}).to_list(2000)
+        grouped = {}
+        for m in sup:
+            grouped.setdefault(m["user_id"], {"title": m.get("user_name", "მომხმარებელი"),
+                                              "subtitle": m["text"], "link": "/admin", "count": 0})
+            grouped[m["user_id"]]["count"] += 1
+        items = list(grouped.values())
+        new_regs = await db.users.find({"role": {"$ne": "admin"}, "seen_by_admin": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(50)
+        for u in new_regs:
+            items.append({"title": f"ახალი რეგისტრაცია: {u['name']}", "subtitle": u["email"], "link": "/admin", "count": 1})
+        return {"count": sum(i["count"] for i in items), "items": items}
     if user.get("role") == "company":
         company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
         if company:
@@ -813,8 +986,60 @@ async def admin_delete_company(company_id: str, admin: dict = Depends(require_ad
     await db.companies.delete_one({"id": company_id})
     await db.messages.delete_many({"company_id": company_id})
     await db.reviews.delete_many({"company_id": company_id})
+    await db.photo_comments.delete_many({"company_id": company_id})
     await db.users.delete_one({"id": company["owner_id"]})
     return {"status": "კომპანია წაიშალა"}
+
+@api_router.get("/admin/users/{user_id}")
+async def admin_user_detail(user_id: str, admin: dict = Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="ვერ მოიძებნა")
+    company = await db.companies.find_one({"owner_id": user_id}, {"_id": 0})
+    u["company"] = company
+    return u
+
+@api_router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, data: AdminUserUpdate, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="ვერ მოიძებნა")
+    updates = {}
+    if data.name is not None:
+        updates["name"] = data.name
+        await db.companies.update_one({"owner_id": user_id}, {"$set": {"name": data.name}})
+    if data.password:
+        if len(data.password) < 6:
+            raise HTTPException(status_code=400, detail="პაროლი მინიმუმ 6 სიმბოლო")
+        updates["password_hash"] = hash_password(data.password)
+    if updates:
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+    return {"status": "განახლდა"}
+
+@api_router.post("/admin/users/{user_id}/block")
+async def admin_block_user(user_id: str, data: BlockInput, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target or target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="შეუძლებელია")
+    await db.users.update_one({"id": user_id}, {"$set": {"blocked": data.blocked}})
+    return {"status": "დაბლოკილია" if data.blocked else "განბლოკილია"}
+
+@api_router.post("/admin/companies/{company_id}/verify")
+async def admin_verify_company(company_id: str, data: VerifyInput, admin: dict = Depends(require_admin)):
+    res = await db.companies.update_one({"id": company_id}, {"$set": {"verified": data.verified}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="ვერ მოიძებნა")
+    return {"status": "verified" if data.verified else "unverified"}
+
+@api_router.delete("/admin/chats/{company_id}/{visitor_id}")
+async def admin_delete_chat(company_id: str, visitor_id: str, admin: dict = Depends(require_admin)):
+    await db.messages.delete_many({"company_id": company_id, "visitor_id": visitor_id})
+    return {"status": "ჩატი წაიშალა"}
+
+@api_router.post("/admin/seen")
+async def admin_mark_seen(admin: dict = Depends(require_admin)):
+    await db.users.update_many({"seen_by_admin": {"$ne": True}}, {"$set": {"seen_by_admin": True}})
+    return {"status": "ok"}
 
 app.include_router(api_router)
 app.add_middleware(
@@ -845,6 +1070,7 @@ async def startup():
             await db.users.insert_one({
                 "id": str(uuid.uuid4()), "email": admin_email, "name": "Admin",
                 "phone": "", "role": "admin", "avatar_url": "", "email_verified": True,
+                "blocked": False, "seen_by_admin": True,
                 "password_hash": hash_password(admin_password),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })

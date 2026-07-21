@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MapPin, Building2, ImageIcon, Loader2 } from "lucide-react";
+import { ArrowLeft, MapPin, Building2, ImageIcon, Loader2, BadgeCheck } from "lucide-react";
 import api, { fileUrl } from "@/lib/api";
 import { imageFor } from "@/lib/destImages";
 import Header from "@/components/Header";
@@ -83,7 +83,10 @@ export default function CountryCompanies() {
                         </div>
                       )}
                     </div>
-                    <h3 className="font-semibold text-lg drop-shadow">{c.name}</h3>
+                    <h3 className="font-semibold text-lg drop-shadow flex items-center gap-1">
+                      {c.name}
+                      {c.verified && <BadgeCheck className="w-4 h-4 text-primary" />}
+                    </h3>
                   </div>
                 </div>
                 <div className="p-4 space-y-3">

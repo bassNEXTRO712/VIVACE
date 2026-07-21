@@ -25,20 +25,21 @@ export default function Header({ transparent = false }) {
         <nav className="flex items-center gap-2">
           {user ? (
             <>
-              {user.role === "admin" ? (
+              {user.role === "admin" && (
                 <Button data-testid="nav-admin" variant="ghost" size="sm" onClick={() => navigate("/admin")}>
-                  <Shield className="w-4 h-4 mr-1" /> ადმინ პანელი
+                  <Shield className="w-4 h-4 mr-1" /> <span className="hidden sm:inline">ადმინ</span>
                 </Button>
-              ) : (
-                <>
-                  <NotificationBell />
-                  <Button data-testid="nav-dashboard" variant="ghost" size="sm"
-                    onClick={() => navigate("/dashboard")}>
-                    <LayoutDashboard className="w-4 h-4 mr-1" /> ჩემი პროფილი
-                  </Button>
-                </>
               )}
-              <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold uppercase overflow-hidden">
+              <NotificationBell />
+              <Button data-testid="nav-dashboard" variant="ghost" size="icon" className="sm:hidden"
+                onClick={() => navigate("/dashboard")} aria-label="dashboard">
+                <LayoutDashboard className="w-4 h-4" />
+              </Button>
+              <Button data-testid="nav-dashboard-lg" variant="ghost" size="sm" className="hidden sm:inline-flex"
+                onClick={() => navigate("/dashboard")}>
+                <LayoutDashboard className="w-4 h-4 mr-1" /> ჩემი პროფილი
+              </Button>
+              <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold uppercase overflow-hidden flex-shrink-0">
                 {user.avatar_url ? (
                   <img src={fileUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
                 ) : (

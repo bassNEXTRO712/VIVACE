@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Country, City } from "country-state-city";
 import { Search, MapPin, Building2, ArrowRight, Globe2, Users, Sparkles, MessageCircle, ShieldCheck, Star } from "lucide-react";
-import api from "@/lib/api";
+import api, { fileUrl } from "@/lib/api";
 import { FEATURED, HERO_IMAGE } from "@/lib/destImages";
 import Header from "@/components/Header";
 
@@ -11,6 +11,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState({});
   const [stats, setStats] = useState({ companies: 0, users: 0, countries: 0 });
+  const [ads, setAds] = useState([]);
   const [focused, setFocused] = useState(false);
   const boxRef = useRef();
 
@@ -28,6 +29,7 @@ export default function Home() {
       setCounts(map);
     });
     api.get("/stats").then((res) => setStats(res.data)).catch(() => {});
+    api.get("/ads").then((res) => setAds(res.data)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -177,6 +179,32 @@ export default function Home() {
             })}
           </div>
         </section>
+
+        {/* Ads */}
+        {ads.length > 0 && (
+          <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-16" data-testid="ads-section">
+            <div className="flex items-center gap-2 mb-6">
+              <span className="text-xs font-semibold text-primary bg-primary/10 border border-primary/30 px-2 py-1 rounded-full">რეკლამა</span>
+              <h2 className="text-xl sm:text-2xl font-semibold">გამორჩეული შეთავაზებები</h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {ads.map((a) => (
+                <a key={a.id} href={a.link || undefined} target={a.link ? "_blank" : undefined} rel="noreferrer"
+                  data-testid="ad-card"
+                  className="group block bg-card border border-border rounded-xl overflow-hidden hover:border-primary transition-colors">
+                  <div className="h-44 bg-secondary overflow-hidden">
+                    {a.media_type === "video" ? (
+                      <video src={fileUrl(a.media_url)} className="w-full h-full object-cover" muted loop autoPlay playsInline />
+                    ) : (
+                      <img src={fileUrl(a.media_url)} alt={a.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    )}
+                  </div>
+                  {a.title && <div className="p-4"><p className="font-medium">{a.title}</p></div>}
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* How it works */}
         <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">

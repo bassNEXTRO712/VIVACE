@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film, MessageCircle, ArrowLeft, Star, Eye, Images } from "lucide-react";
+import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film, MessageCircle, ArrowLeft, Star, Eye, Images, BadgeCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api, { fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -74,7 +74,10 @@ export default function PublicProfile() {
             )}
           </div>
           <div className="pb-2 flex-1">
-            <h1 className="text-3xl font-bold">{company.name}</h1>
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              {company.name}
+              {company.verified && <BadgeCheck className="w-6 h-6 text-primary" data-testid="verified-badge" title="ვერიფიცირებული" />}
+            </h1>
             {company.country && (
               <p className="text-muted-foreground flex items-center gap-1 mt-1">
                 <Globe className="w-4 h-4" /> {company.country}

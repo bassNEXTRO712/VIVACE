@@ -1,27 +1,43 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Shield, Users, Building2, Star, MessageSquare, Trash2, LogOut, Loader2 } from "lucide-react";
+import { Shield, Users, Building2, Star, MessageSquare, Trash2, LogOut, Loader2, Ban, CheckCircle2, Pencil, Eye, BadgeCheck, Headset, Megaphone, Home as HomeIcon } from "lucide-react";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import AdminSupport from "@/components/AdminSupport";
+import AdminAds from "@/components/AdminAds";
 
 function StatCard({ icon: Icon, label, value }) {
   return (
     <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4">
-      <div className="w-11 h-11 rounded-lg bg-primary/15 text-primary flex items-center justify-center">
-        <Icon className="w-5 h-5" />
-      </div>
-      <div>
-        <p className="text-2xl font-bold">{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
-      </div>
+      <div className="w-11 h-11 rounded-lg bg-primary/15 text-primary flex items-center justify-center"><Icon className="w-5 h-5" /></div>
+      <div><p className="text-2xl font-bold">{value}</p><p className="text-xs text-muted-foreground">{label}</p></div>
     </div>
+  );
+}
+
+function DeleteBtn({ onConfirm, title, desc, testid }) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button data-testid={testid} size="icon" variant="destructive" className="h-8 w-8 bg-destructive hover:bg-red-700"><Trash2 className="w-4 h-4" /></Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="bg-card border-border">
+        <AlertDialogHeader><AlertDialogTitle>{title}</AlertDialogTitle><AlertDialogDescription>{desc}</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel>გაუქმება</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm} className="bg-destructive hover:bg-red-700">წაშლა</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -32,29 +48,30 @@ export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [edit, setEdit] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editPass, setEditPass] = useState("");
 
   const load = async () => {
     try {
-      const [s, u, c] = await Promise.all([
-        api.get("/admin/stats"), api.get("/admin/users"), api.get("/admin/companies"),
-      ]);
+      const [s, u, c] = await Promise.all([api.get("/admin/stats"), api.get("/admin/users"), api.get("/admin/companies")]);
       setStats(s.data); setUsers(u.data); setCompanies(c.data);
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { toast.error(apiError(err)); }
+    finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.post("/admin/seen").catch(() => {}); }, []);
 
-  const delUser = async (id) => {
-    try { await api.delete(`/admin/users/${id}`); toast.success("წაიშალა"); load(); }
-    catch (err) { toast.error(apiError(err)); }
-  };
-  const delCompany = async (id) => {
-    try { await api.delete(`/admin/companies/${id}`); toast.success("წაიშალა"); load(); }
-    catch (err) { toast.error(apiError(err)); }
+  const delUser = async (id) => { try { await api.delete(`/admin/users/${id}`); toast.success("წაიშალა"); load(); } catch (e) { toast.error(apiError(e)); } };
+  const delCompany = async (id) => { try { await api.delete(`/admin/companies/${id}`); toast.success("წაიშალა"); load(); } catch (e) { toast.error(apiError(e)); } };
+  const toggleBlock = async (u) => { try { await api.post(`/admin/users/${u.id}/block`, { blocked: !u.blocked }); toast.success(u.blocked ? "განიბლოკა" : "დაიბლოკა"); load(); } catch (e) { toast.error(apiError(e)); } };
+  const toggleVerify = async (c) => { try { await api.post(`/admin/companies/${c.id}/verify`, { verified: !c.verified }); load(); } catch (e) { toast.error(apiError(e)); } };
+  const openEdit = (u) => { setEdit(u); setEditName(u.name); setEditPass(""); };
+  const saveEdit = async () => {
+    try {
+      await api.put(`/admin/users/${edit.id}`, { name: editName, password: editPass || undefined });
+      toast.success("განახლდა"); setEdit(null); load();
+    } catch (e) { toast.error(apiError(e)); }
   };
 
   return (
@@ -62,24 +79,19 @@ export default function AdminPanel() {
       <header className="border-b border-border bg-card/50 sticky top-0 z-20 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
-              <Shield className="w-5 h-5 text-primary-foreground" />
-            </div>
+            <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center"><Shield className="w-5 h-5 text-primary-foreground" /></div>
             <span className="font-semibold">ადმინ პანელი</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/")}><HomeIcon className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">საიტი</span></Button>
             <span className="text-sm text-muted-foreground hidden md:block">{user?.email}</span>
-            <Button variant="ghost" size="sm" onClick={() => { logout(); navigate("/"); }}>
-              <LogOut className="w-4 h-4 mr-1" /> გასვლა
-            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { logout(); navigate("/"); }}><LogOut className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">გასვლა</span></Button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {loading ? (
-          <div className="flex justify-center py-24"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>
-        ) : (
+        {loading ? <div className="flex justify-center py-24"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div> : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <StatCard icon={Users} label="მომხმარებელი" value={stats.users || 0} />
@@ -89,37 +101,32 @@ export default function AdminPanel() {
             </div>
 
             <Tabs defaultValue="users" className="space-y-6">
-              <TabsList className="bg-card border border-border">
-                <TabsTrigger data-testid="admin-tab-users" value="users">მომხმარებლები</TabsTrigger>
-                <TabsTrigger data-testid="admin-tab-companies" value="companies">კომპანიები</TabsTrigger>
+              <TabsList className="bg-card border border-border flex-wrap h-auto">
+                <TabsTrigger data-testid="admin-tab-users" value="users"><Users className="w-4 h-4 mr-1" />მომხმარებლები</TabsTrigger>
+                <TabsTrigger data-testid="admin-tab-companies" value="companies"><Building2 className="w-4 h-4 mr-1" />კომპანიები</TabsTrigger>
+                <TabsTrigger data-testid="admin-tab-support" value="support"><Headset className="w-4 h-4 mr-1" />მიმართვები</TabsTrigger>
+                <TabsTrigger data-testid="admin-tab-ads" value="ads"><Megaphone className="w-4 h-4 mr-1" />რეკლამა</TabsTrigger>
               </TabsList>
 
               <TabsContent value="users">
                 <div className="bg-card border border-border rounded-xl divide-y divide-border">
                   {users.map((u) => (
-                    <div key={u.id} data-testid="admin-user-row" className="flex items-center gap-3 px-4 py-3">
+                    <div key={u.id} data-testid="admin-user-row" className="flex items-center gap-2 px-4 py-3">
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{u.name} <span className="text-xs text-muted-foreground">({u.role})</span></p>
+                        <p className="font-medium text-sm truncate flex items-center gap-2">
+                          {u.name} <span className="text-xs text-muted-foreground">({u.role})</span>
+                          {u.blocked && <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">დაბლოკილი</span>}
+                        </p>
                         <p className="text-xs text-muted-foreground truncate">{u.email}</p>
                       </div>
                       {u.role !== "admin" && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button data-testid="admin-delete-user" size="icon" variant="destructive" className="h-8 w-8 bg-destructive hover:bg-red-700">
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent className="bg-card border-border">
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>წაშლა?</AlertDialogTitle>
-                              <AlertDialogDescription>{u.email} სამუდამოდ წაიშლება მთელ მონაცემებთან ერთად.</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>გაუქმება</AlertDialogCancel>
-                              <AlertDialogAction data-testid="admin-confirm-delete-user" onClick={() => delUser(u.id)} className="bg-destructive hover:bg-red-700">წაშლა</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        <>
+                          <Button data-testid="admin-edit-user" size="icon" variant="outline" className="h-8 w-8 border-border" onClick={() => openEdit(u)}><Pencil className="w-4 h-4" /></Button>
+                          <Button data-testid="admin-block-user" size="icon" variant="outline" className="h-8 w-8 border-border" onClick={() => toggleBlock(u)}>
+                            {u.blocked ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <Ban className="w-4 h-4 text-red-400" />}
+                          </Button>
+                          <DeleteBtn testid="admin-delete-user" title="წაშლა?" desc={`${u.email} სამუდამოდ წაიშლება.`} onConfirm={() => delUser(u.id)} />
+                        </>
                       )}
                     </div>
                   ))}
@@ -129,36 +136,40 @@ export default function AdminPanel() {
               <TabsContent value="companies">
                 <div className="bg-card border border-border rounded-xl divide-y divide-border">
                   {companies.map((c) => (
-                    <div key={c.id} data-testid="admin-company-row" className="flex items-center gap-3 px-4 py-3">
+                    <div key={c.id} data-testid="admin-company-row" className="flex items-center gap-2 px-4 py-3">
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{c.name}</p>
+                        <p className="font-medium text-sm truncate flex items-center gap-1">
+                          {c.name} {c.verified && <BadgeCheck className="w-4 h-4 text-primary" />}
+                        </p>
                         <p className="text-xs text-muted-foreground truncate">{c.country || "—"} · {c.media_count} მედია</p>
                       </div>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button data-testid="admin-delete-company" size="icon" variant="destructive" className="h-8 w-8 bg-destructive hover:bg-red-700">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent className="bg-card border-border">
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>წაშლა?</AlertDialogTitle>
-                            <AlertDialogDescription>{c.name} და მისი მფლობელის ანგარიში წაიშლება.</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>გაუქმება</AlertDialogCancel>
-                            <AlertDialogAction data-testid="admin-confirm-delete-company" onClick={() => delCompany(c.id)} className="bg-destructive hover:bg-red-700">წაშლა</AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <Button data-testid="admin-view-company" size="icon" variant="outline" className="h-8 w-8 border-border" onClick={() => window.open(`/company/${c.id}`, "_blank")}><Eye className="w-4 h-4" /></Button>
+                      <Button data-testid="admin-verify-company" size="icon" variant="outline" className={`h-8 w-8 border-border ${c.verified ? "text-primary" : ""}`} onClick={() => toggleVerify(c)}><BadgeCheck className="w-4 h-4" /></Button>
+                      <DeleteBtn testid="admin-delete-company" title="წაშლა?" desc={`${c.name} და მფლობელი წაიშლება.`} onConfirm={() => delCompany(c.id)} />
                     </div>
                   ))}
                 </div>
               </TabsContent>
+
+              <TabsContent value="support"><AdminSupport /></TabsContent>
+              <TabsContent value="ads"><AdminAds /></TabsContent>
             </Tabs>
           </>
         )}
       </main>
+
+      <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
+        <DialogContent className="bg-card border-border">
+          <DialogHeader><DialogTitle>მომხმარებლის რედაქტირება</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label>სახელი</Label>
+              <Input data-testid="admin-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} /></div>
+            <div className="space-y-2"><Label>ახალი პაროლი (არასავალდებულო)</Label>
+              <Input data-testid="admin-edit-password" type="text" value={editPass} onChange={(e) => setEditPass(e.target.value)} placeholder="დატოვე ცარიელი უცვლელად" /></div>
+            <Button data-testid="admin-edit-save" onClick={saveEdit} className="bg-primary hover:bg-orange-600 w-full">შენახვა</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
