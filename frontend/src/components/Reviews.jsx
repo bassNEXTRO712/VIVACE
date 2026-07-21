@@ -21,7 +21,7 @@ function Stars({ value, size = "w-4 h-4", onSelect }) {
   );
 }
 
-export default function Reviews({ companyId, isOwner }) {
+export default function Reviews({ companyId, isOwner, onStats }) {
   const { user } = useAuth();
   const [data, setData] = useState({ reviews: [], rating_avg: 0, review_count: 0 });
   const [rating, setRating] = useState(5);
@@ -33,6 +33,7 @@ export default function Reviews({ companyId, isOwner }) {
     try {
       const { data } = await api.get(`/company/${companyId}/reviews`);
       setData(data);
+      onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
     } finally {
       setLoading(false);
     }
@@ -44,6 +45,7 @@ export default function Reviews({ companyId, isOwner }) {
     try {
       const { data } = await api.post(`/company/${companyId}/reviews`, { rating, text });
       setData(data);
+      onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
       setText("");
       toast.success("შეფასება დაემატა");
     } catch (err) {

@@ -172,7 +172,8 @@ export default function PublicProfile() {
                 </div>
               )}
             </div>
-            <Reviews companyId={company.id} isOwner={user?.company_id === company.id} />
+            <Reviews companyId={company.id} isOwner={user?.company_id === company.id}
+              onStats={(s) => setCompany((c) => ({ ...c, ...s }))} />
           </div>
         </div>
         <div className="h-16" />

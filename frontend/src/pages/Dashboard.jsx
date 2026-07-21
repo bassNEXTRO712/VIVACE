@@ -11,6 +11,7 @@ import MediaGallery from "@/components/MediaGallery";
 import AccountSettings from "@/components/AccountSettings";
 import ChatInbox from "@/components/ChatInbox";
 import UserProfile from "@/components/UserProfile";
+import NotificationBell from "@/components/NotificationBell";
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -59,6 +60,7 @@ export default function Dashboard() {
             <Button data-testid="nav-home-button" variant="ghost" size="sm" onClick={() => navigate("/")}>
               <HomeIcon className="w-4 h-4 mr-1" /> მთავარი
             </Button>
+            <NotificationBell />
             {isCompany && company && (
               <Button data-testid="view-public-button" variant="outline" size="sm"
                 onClick={() => window.open(`/company/${company.id}`, "_blank")}

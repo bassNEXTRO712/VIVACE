@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Send, Loader2 } from "lucide-react";
 import api, { apiError, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -35,6 +35,7 @@ export default function PhotoDialog({ companyId, media, onClose }) {
   return (
     <Dialog open={!!media} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="bg-card border-border max-w-4xl p-0 overflow-hidden">
+        <DialogTitle className="sr-only">ფოტო და კომენტარები</DialogTitle>
         <div className="grid grid-cols-1 md:grid-cols-2">
           <div className="bg-black flex items-center justify-center max-h-[70vh]">
             {media?.type === "video" ? (
