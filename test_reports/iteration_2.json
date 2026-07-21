@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 2 focused on the NEW VIVACE features (Home directory, Country page, and visitor↔company chat) plus regression. Backend: 16 new pytest cases added in test_directory_and_chat.py (public directory + full chat round-trip incl. isolation, auth requirements, 404s, sender field, ordering). All 37 backend tests pass (21 existing + 16 new). Frontend: Playwright verified home renders without auth (60 country cards, Georgia sorted first with '8 კომპანია' badge), search returns country + city results, country card navigates to /country/Georgia (8 companies visible), company card opens public profile, unauth chat widget shows chat-login-button, authenticated visitor sent a message that appeared in the widget, owner login on curltest@test.com showed 2 conversations in Messages (შეტყობინებები) tab, owner reply appeared in the thread bubble. Existing seeded credentials curltest@test.com/test123 and visitor1@test.com/test123 both validated via API.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/companies-countries", "issue": "Aggregation runs on every request without caching or index. With country=='' filter this is fine for small volume but should have an index on {country:1} once dataset grows."},
+      {"endpoint": "POST /api/chat/inbox/{visitor_id}/messages", "issue": "Does not validate that visitor_id has ever messaged this company; a company owner can send a reply to ANY user_id (creates a synthetic conversation with visitor_name='მომხმარებელი'). Not a security leak (visitor can only read own thread) but allows creation of orphan conversations."},
+      {"endpoint": "POST /api/chat/{company_id}/messages", "issue": "No text validation — empty strings or arbitrarily long text are accepted. Consider max length and min length > 0."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PublicProfile media gallery", "issues": ["The visible '(1)' media thumbnail on the public profile appears as an empty box (broken image icon) when the media URL fails to load. Only cosmetic — the file endpoint returns 200 in backend tests. May be a stale media entry from a previous storage run."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_new.xml"
+  ],
+  "action_items": [
+    "Optional: add server-side text validation (non-empty, max length ~2000) on both chat POST endpoints.",
+    "Optional: in send_company_reply, verify that visitor_id has at least one message in this company's thread before allowing reply (prevents orphan conversations)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~529 lines; the chat + directory endpoints could be split into a routers/chat.py and routers/public.py module for maintainability.",
+    "send_company_reply looks up the visitor's message just to fetch visitor_name; if no prior message exists it silently falls back to 'მომხმარებელი' — creates orphan conversations because there's no ownership check on visitor_id.",
+    "chat_inbox re-computes conversation summaries in Python from a full messages scan on every poll (every 6s per owner). Once messages grow beyond a few thousand this needs an aggregation pipeline or a per-conversation summary collection.",
+    "list_companies has no pagination (returns up to 1000). Frontend Home relies on this via /companies-countries only, but the /companies endpoint should paginate as data grows.",
+    "Home.jsx calls City.getAllCities() (~150k rows) on every render mount which delays first interaction; already memoized but the initial CPU cost is significant. Consider lazy import or country-scoped lookup on demand.",
+    "ChatWidget/ChatInbox poll intervals (4s/6s) are set independently and will keep firing when tab is in background. Consider pausing polling when document.hidden."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_directory_and_chat.py"
+  ],
+  "success_rate": {"backend": "100% (37/37)", "frontend": "100% (all critical new flows verified)"},
+  "test_credentials": "Seeded: curltest@test.com / test123 (owner, Georgia, 2 active conversations after this run); visitor1@test.com / test123 (visitor). Fresh test accounts also created during run (test_owner_*, test_visitor_*, visitest_*@test.com).",
+  "seed_data_creation": "Backend tests create fresh company owners with country=Georgia and fresh visitors per test run (idempotent). UI test registered visitest_1784639492@test.com and left 1 new conversation visible in curltest's inbox ('TEST Visitor UI' with a visitor msg + owner reply).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two backend test files: backend_test.py (regression, 21 cases) and test_directory_and_chat.py (16 new cases for /api/companies, /api/companies-countries, and /api/chat/*). Run both with: `pytest /app/backend/tests/ --junitxml=/app/test_reports/pytest/pytest_results.xml`. pytest.ini uses `-n 2 --dist loadscope` (fine, tests are class-scoped). Home page search: country match requires >=2 chars, city match >=3 chars. Chat is polling-based (visitor 4s, inbox 6s, thread 4s) — wait ~2-3s after send() before asserting. Georgia is guaranteed to have >=3 companies (curltest owns 3 seeded + tests add more). Visitor authentication is required for both POST/GET /api/chat/{company_id}/messages; unauth returns 401/403. Chat endpoint returns 404 for unknown company_id.",
+  "rca_of_the_issue": "N/A — no bugs found requiring RCA."
+}

@@ -182,6 +182,22 @@ class ContactChangeRequest(BaseModel):
 class CodeConfirm(BaseModel):
     code: str
 
+class ChatMessageInput(BaseModel):
+    text: str
+
+def company_card(doc: dict) -> dict:
+    return {
+        "id": doc.get("id"),
+        "name": doc.get("name"),
+        "country": doc.get("country", ""),
+        "service_cities": doc.get("service_cities", []),
+        "address": doc.get("address", ""),
+        "description": doc.get("description", ""),
+        "logo_url": doc.get("logo_url", ""),
+        "cover_url": doc.get("cover_url", ""),
+        "media_count": len(doc.get("media", [])),
+    }
+
 def public_company(doc: dict) -> dict:
     doc.pop("_id", None)
     doc.pop("owner_id", None)
@@ -388,6 +404,97 @@ async def confirm_change(data: CodeConfirm, user: dict = Depends(get_current_use
 # ---------------------------------------------------------------------------
 # App wiring
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Public directory endpoints
+# ---------------------------------------------------------------------------
+@api_router.get("/companies")
+async def list_companies(country: Optional[str] = None, city: Optional[str] = None, q: Optional[str] = None):
+    query = {}
+    if country:
+        query["country"] = country
+    if city:
+        query["service_cities"] = city
+    if q:
+        query["name"] = {"$regex": q, "$options": "i"}
+    docs = await db.companies.find(query).to_list(1000)
+    return [company_card(d) for d in docs]
+
+@api_router.get("/companies-countries")
+async def companies_countries():
+    pipeline = [
+        {"$match": {"country": {"$ne": ""}}},
+        {"$group": {"_id": "$country", "count": {"$sum": 1}}},
+    ]
+    rows = await db.companies.aggregate(pipeline).to_list(1000)
+    return [{"country": r["_id"], "count": r["count"]} for r in rows]
+
+# ---------------------------------------------------------------------------
+# Chat endpoints
+# ---------------------------------------------------------------------------
+@api_router.post("/chat/{company_id}/messages")
+async def send_visitor_message(company_id: str, data: ChatMessageInput, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"id": company_id}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
+    msg = {
+        "id": str(uuid.uuid4()), "company_id": company_id,
+        "visitor_id": user["id"], "visitor_name": user["name"],
+        "sender": "visitor", "text": data.text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+@api_router.get("/chat/{company_id}/messages")
+async def get_visitor_messages(company_id: str, user: dict = Depends(get_current_user)):
+    docs = await db.messages.find(
+        {"company_id": company_id, "visitor_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    return docs
+
+@api_router.get("/chat/inbox")
+async def chat_inbox(user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not company:
+        return []
+    docs = await db.messages.find({"company_id": company["id"]}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    convos = {}
+    for m in docs:
+        convos[m["visitor_id"]] = {
+            "visitor_id": m["visitor_id"],
+            "visitor_name": m.get("visitor_name", "მომხმარებელი"),
+            "last_text": m["text"],
+            "last_at": m["created_at"],
+        }
+    return sorted(convos.values(), key=lambda x: x["last_at"], reverse=True)
+
+@api_router.get("/chat/inbox/{visitor_id}/messages")
+async def get_company_conversation(visitor_id: str, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
+    docs = await db.messages.find(
+        {"company_id": company["id"], "visitor_id": visitor_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    return docs
+
+@api_router.post("/chat/inbox/{visitor_id}/messages")
+async def send_company_reply(visitor_id: str, data: ChatMessageInput, user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
+    visitor = await db.messages.find_one({"company_id": company["id"], "visitor_id": visitor_id}, {"_id": 0})
+    msg = {
+        "id": str(uuid.uuid4()), "company_id": company["id"],
+        "visitor_id": visitor_id, "visitor_name": visitor.get("visitor_name") if visitor else "მომხმარებელი",
+        "sender": "company", "text": data.text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.messages.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
 @api_router.get("/")
 async def root():
     return {"message": "Company Profile API"}

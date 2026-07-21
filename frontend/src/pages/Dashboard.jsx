@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Building2, LogOut, User, Images, Shield, ExternalLink, Loader2 } from "lucide-react";
+import { Building2, LogOut, User, Images, Shield, ExternalLink, Loader2, MessageSquare } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import ProfileEditor from "@/components/ProfileEditor";
 import MediaGallery from "@/components/MediaGallery";
 import AccountSettings from "@/components/AccountSettings";
+import ChatInbox from "@/components/ChatInbox";
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -73,6 +74,9 @@ export default function Dashboard() {
               <TabsTrigger data-testid="tab-gallery" value="gallery">
                 <Images className="w-4 h-4 mr-2" /> გალერეა
               </TabsTrigger>
+              <TabsTrigger data-testid="tab-messages" value="messages">
+                <MessageSquare className="w-4 h-4 mr-2" /> შეტყობინებები
+              </TabsTrigger>
               <TabsTrigger data-testid="tab-settings" value="settings">
                 <Shield className="w-4 h-4 mr-2" /> პარამეტრები
               </TabsTrigger>
@@ -82,6 +86,9 @@ export default function Dashboard() {
             </TabsContent>
             <TabsContent value="gallery">
               <MediaGallery company={company} onUpdate={setCompany} />
+            </TabsContent>
+            <TabsContent value="messages">
+              <ChatInbox />
             </TabsContent>
             <TabsContent value="settings">
               <AccountSettings />

@@ -6,6 +6,8 @@ import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Dashboard from "@/pages/Dashboard";
 import PublicProfile from "@/pages/PublicProfile";
+import Home from "@/pages/Home";
+import CountryCompanies from "@/pages/CountryCompanies";
 import { Loader2 } from "lucide-react";
 
 const ProtectedRoute = ({ children }) => {
@@ -33,7 +35,8 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Home />} />
+            <Route path="/country/:country" element={<CountryCompanies />} />
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
             <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

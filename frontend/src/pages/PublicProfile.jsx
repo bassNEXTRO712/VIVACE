@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film } from "lucide-react";
 import api, { fileUrl } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { Badge } from "@/components/ui/badge";
+import Header from "@/components/Header";
+import ChatWidget from "@/components/ChatWidget";
 
 export default function PublicProfile() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -36,6 +40,7 @@ export default function PublicProfile() {
 
   return (
     <div className="min-h-screen bg-background">
+      <Header />
       {/* Cover */}
       <div className="relative h-56 md:h-72 bg-secondary">
         {company.cover_url ? (
@@ -130,6 +135,8 @@ export default function PublicProfile() {
         </div>
         <div className="h-16" />
       </div>
+      <ChatWidget companyId={company.id} companyName={company.name}
+        isOwner={user?.company_id === company.id} />
     </div>
   );
 }
