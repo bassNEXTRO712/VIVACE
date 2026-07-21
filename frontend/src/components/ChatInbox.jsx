@@ -81,11 +81,19 @@ export default function ChatInbox() {
             {convos.map((c) => (
               <button key={c.visitor_id} data-testid="inbox-conversation"
                 onClick={() => setActive(c)}
-                className={`w-full text-left px-4 py-3 hover:bg-secondary transition-colors ${
+                className={`w-full text-left px-4 py-3 hover:bg-secondary transition-colors flex items-center gap-2 ${
                   active?.visitor_id === c.visitor_id ? "bg-secondary" : ""
                 }`}>
-                <p className="font-medium text-sm truncate">{c.visitor_name}</p>
-                <p className="text-xs text-muted-foreground truncate">{c.last_text}</p>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm truncate">{c.visitor_name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.last_text}</p>
+                </div>
+                {c.unread > 0 && (
+                  <span data-testid="conversation-unread-badge"
+                    className="min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center flex-shrink-0">
+                    {c.unread}
+                  </span>
+                )}
               </button>
             ))}
           </div>

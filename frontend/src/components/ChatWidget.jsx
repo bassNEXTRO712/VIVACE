@@ -3,6 +3,7 @@ import { MessageCircle, X, Send, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { requestNotifyPermission, notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -13,6 +14,8 @@ export default function ChatWidget({ companyId, companyName, isOwner }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const prevCompanyMsgs = useRef(0);
   const endRef = useRef();
 
   const load = async () => {
@@ -20,16 +23,30 @@ export default function ChatWidget({ companyId, companyName, isOwner }) {
     try {
       const { data } = await api.get(`/chat/${companyId}/messages`);
       setMessages(data);
+      const companyMsgs = data.filter((m) => m.sender === "company");
+      if (companyMsgs.length > prevCompanyMsgs.current && prevCompanyMsgs.current > 0) {
+        notify("VIVACE — პასუხი კომპანიისგან", `${companyName} გიპასუხათ.`);
+      }
+      prevCompanyMsgs.current = companyMsgs.length;
+      const un = data.filter((m) => m.sender === "company" && !m.read_by_visitor).length;
+      setUnread(un);
     } catch (_) {}
   };
 
   useEffect(() => {
-    if (!open || !user) return;
+    if (!user || isOwner) return;
+    requestNotifyPermission();
     load();
-    const t = setInterval(load, 4000);
+    const t = setInterval(load, 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line
-  }, [open, user, companyId]);
+  }, [user, companyId, isOwner]);
+
+  useEffect(() => {
+    if (!open || !user) return;
+    api.post(`/chat/${companyId}/read`).then(() => setUnread(0)).catch(() => {});
+    // eslint-disable-next-line
+  }, [open]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -57,6 +74,12 @@ export default function ChatWidget({ companyId, companyName, isOwner }) {
         <button data-testid="open-chat-button" onClick={() => setOpen(true)}
           className="fixed bottom-6 right-6 z-40 bg-primary hover:bg-orange-600 transition-colors text-primary-foreground rounded-full h-14 w-14 flex items-center justify-center shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
           <MessageCircle className="w-6 h-6" />
+          {unread > 0 && (
+            <span data-testid="chat-unread-badge"
+              className="absolute -top-1 -right-1 min-w-6 h-6 px-1.5 rounded-full bg-destructive text-white text-xs font-bold flex items-center justify-center border-2 border-background">
+              {unread}
+            </span>
+          )}
         </button>
       )}
 

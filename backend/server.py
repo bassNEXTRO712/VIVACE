@@ -440,6 +440,7 @@ async def send_visitor_message(company_id: str, data: ChatMessageInput, user: di
         "id": str(uuid.uuid4()), "company_id": company_id,
         "visitor_id": user["id"], "visitor_name": user["name"],
         "sender": "visitor", "text": data.text,
+        "read_by_company": False, "read_by_visitor": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.messages.insert_one(msg)
@@ -453,6 +454,14 @@ async def get_visitor_messages(company_id: str, user: dict = Depends(get_current
     ).sort("created_at", 1).to_list(1000)
     return docs
 
+@api_router.post("/chat/{company_id}/read")
+async def visitor_mark_read(company_id: str, user: dict = Depends(get_current_user)):
+    await db.messages.update_many(
+        {"company_id": company_id, "visitor_id": user["id"], "sender": "company", "read_by_visitor": {"$ne": True}},
+        {"$set": {"read_by_visitor": True}},
+    )
+    return {"status": "ok"}
+
 @api_router.get("/chat/inbox")
 async def chat_inbox(user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
@@ -461,19 +470,40 @@ async def chat_inbox(user: dict = Depends(get_current_user)):
     docs = await db.messages.find({"company_id": company["id"]}, {"_id": 0}).sort("created_at", 1).to_list(2000)
     convos = {}
     for m in docs:
-        convos[m["visitor_id"]] = {
-            "visitor_id": m["visitor_id"],
-            "visitor_name": m.get("visitor_name", "მომხმარებელი"),
-            "last_text": m["text"],
-            "last_at": m["created_at"],
-        }
+        vid = m["visitor_id"]
+        if vid not in convos:
+            convos[vid] = {
+                "visitor_id": vid,
+                "visitor_name": m.get("visitor_name", "მომხმარებელი"),
+                "last_text": m["text"],
+                "last_at": m["created_at"],
+                "unread": 0,
+            }
+        convos[vid]["last_text"] = m["text"]
+        convos[vid]["last_at"] = m["created_at"]
+        if m["sender"] == "visitor" and not m.get("read_by_company", False):
+            convos[vid]["unread"] += 1
     return sorted(convos.values(), key=lambda x: x["last_at"], reverse=True)
+
+@api_router.get("/chat/inbox/unread-count")
+async def inbox_unread_count(user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+    if not company:
+        return {"count": 0}
+    count = await db.messages.count_documents(
+        {"company_id": company["id"], "sender": "visitor", "read_by_company": {"$ne": True}}
+    )
+    return {"count": count}
 
 @api_router.get("/chat/inbox/{visitor_id}/messages")
 async def get_company_conversation(visitor_id: str, user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
+    await db.messages.update_many(
+        {"company_id": company["id"], "visitor_id": visitor_id, "sender": "visitor", "read_by_company": {"$ne": True}},
+        {"$set": {"read_by_company": True}},
+    )
     docs = await db.messages.find(
         {"company_id": company["id"], "visitor_id": visitor_id}, {"_id": 0}
     ).sort("created_at", 1).to_list(1000)
@@ -489,6 +519,7 @@ async def send_company_reply(visitor_id: str, data: ChatMessageInput, user: dict
         "id": str(uuid.uuid4()), "company_id": company["id"],
         "visitor_id": visitor_id, "visitor_name": visitor.get("visitor_name") if visitor else "მომხმარებელი",
         "sender": "company", "text": data.text,
+        "read_by_company": True, "read_by_visitor": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.messages.insert_one(msg)

@@ -11,7 +11,10 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "https://fastapi-company-db.preview.emergentagent.com",
+).rstrip("/")
 API = f"{BASE_URL}/api"
 
 

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Building2, LogOut, User, Images, Shield, ExternalLink, Loader2, MessageSquare } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { requestNotifyPermission, notify } from "@/lib/notify";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import ProfileEditor from "@/components/ProfileEditor";
@@ -15,6 +16,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [unread, setUnread] = useState(0);
+  const prevUnread = useRef(0);
 
   const loadCompany = async () => {
     try {
@@ -27,6 +30,20 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadCompany();
+    requestNotifyPermission();
+    const poll = async () => {
+      try {
+        const { data } = await api.get("/chat/inbox/unread-count");
+        setUnread(data.count);
+        if (data.count > prevUnread.current) {
+          notify("VIVACE — ახალი შეტყობინება", "თქვენ მიიღეთ ახალი შეტყობინება კლიენტისგან.");
+        }
+        prevUnread.current = data.count;
+      } catch (_) {}
+    };
+    poll();
+    const t = setInterval(poll, 8000);
+    return () => clearInterval(t);
   }, []);
 
   const doLogout = () => {
@@ -76,6 +93,12 @@ export default function Dashboard() {
               </TabsTrigger>
               <TabsTrigger data-testid="tab-messages" value="messages">
                 <MessageSquare className="w-4 h-4 mr-2" /> შეტყობინებები
+                {unread > 0 && (
+                  <span data-testid="messages-unread-badge"
+                    className="ml-2 min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
+                    {unread}
+                  </span>
+                )}
               </TabsTrigger>
               <TabsTrigger data-testid="tab-settings" value="settings">
                 <Shield className="w-4 h-4 mr-2" /> პარამეტრები

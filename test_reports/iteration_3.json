@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 3 focused on the NEW unread-message indicator + browser-notification enhancement (visitor<->company chat). Backend: added /app/backend/tests/test_chat_unread.py with 12 pytest cases covering read_by_company on visitor send, /chat/inbox/unread-count, per-conversation unread integer, inbox sum == unread-count, opening a conversation marks that visitor's messages read, POST /chat/{id}/read marks company->visitor read_by_visitor=true, company reply produces read_by_visitor=false, text validation (empty / 2001 chars / exactly 2000 chars). All 49 backend tests pass (21 regression + 16 directory/chat + 12 new unread). Frontend Playwright test executed the exact scripted flow: registered fresh visitor, seeded 2 unread messages to curltest's company, logged in as owner -> messages-unread-badge showed '4' (matching pre-existing + new unread), opened Messages tab -> V Test conversation showed conversation-unread-badge='2', clicking convo cleared its badge and reduced tab-messages badge to '2', owner sent reply, then logged in as visitor and opened company profile -> chat-unread-badge='1' appeared on floating button, opening + closing chat cleared it. No JS errors captured. Notification permission was granted via context but OS notification cannot be asserted (as noted in agent context).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_chat_unread.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_unread.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "chat_inbox still scans every message for the company on every 6s poll to compute per-convo unread; combine with inbox_unread_count into a single aggregation pipeline once messages exceed a few thousand.",
+    "Dashboard poll interval 8s + ChatInbox 6s + thread 4s all keep firing when the tab is hidden. Consider pausing polling via document.visibilitychange to save requests and battery.",
+    "ChatWidget.jsx: `prevCompanyMsgs.current > 0` guard on notify means the very FIRST poll that returns any company message will NOT notify. This is intentional (avoids notifying on initial page load) but if a visitor opens the widget for the first time on a page reload after a reply arrived, they receive no notification — the chat-unread-badge is the only signal in that case, which is fine.",
+    "server.py load_dotenv is at top which is correct; MongoDB indexes on messages.company_id + messages.visitor_id should be added (currently indexes only on users.email/id and companies.id/owner_id). Every unread/inbox query filters by these two fields.",
+    "send_company_reply falls back to visitor_name='მომხმარებელი' if no prior message exists (already flagged in iteration 2). Still creates an orphan conversation with read_by_visitor=false — could inflate a stranger's unread count. Not a security issue but worth an ownership check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_chat_unread.py",
+    "/app/backend/tests/test_directory_and_chat.py"
+  ],
+  "success_rate": {"backend": "100% (49/49, 12/12 new unread)", "frontend": "100% (owner badge, per-convo badge, badge clear on open, visitor floating badge, badge clear on open)"},
+  "test_credentials": "Existing: curltest@test.com/test123 (owner, Georgia, now has 3+ convos), visitor1@test.com/test123. This run created vtest-<random>@test.com / test123 (fresh visitor, left 1 convo 'V Test' in curltest inbox).",
+  "seed_data_creation": "Fresh visitor vtest-dbcdc7@test.com and 2 UI unread messages -> then owner replied 'Owner reply to test visitor'. Backend pytest added its own test_owner_ur_/test_visitor_ur_ accounts (idempotent).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Three backend test files under /app/backend/tests/: backend_test.py (regression), test_directory_and_chat.py (public directory + chat basics), test_chat_unread.py (NEW unread flow, 12 cases in single class TestUnreadFlow — must stay in one class because tests share state and run sequentially). Run: `pytest /app/backend/tests/ --junitxml=/app/test_reports/pytest/pytest_results.xml`. pytest.ini uses `-n 2 --dist loadscope` so DO NOT split TestUnreadFlow into multiple classes or it will race. All three files use os.environ.get(REACT_APP_BACKEND_URL, <preview_url>). Poll intervals: owner unread poll 8s, inbox 6s, thread 4s, visitor widget 5s — wait 3-6s after actions before asserting. Frontend data-testids exercised: messages-unread-badge, conversation-unread-badge, chat-unread-badge, tab-messages, inbox-conversation, inbox-message-input, inbox-send-button, open-chat-button, chat-message-input, close-chat-button, login-*.",
+  "rca_of_the_issue": "N/A — feature works as designed; no bugs found."
+}
