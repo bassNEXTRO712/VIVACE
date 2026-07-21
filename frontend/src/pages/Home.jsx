@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Country, City } from "country-state-city";
-import { Search, MapPin, Building2, ArrowRight, Globe2, Users, Sparkles, MessageCircle, ShieldCheck, Star } from "lucide-react";
+import { Search, MapPin, Building2, ArrowRight, Globe2, Users, Sparkles, MessageCircle, ShieldCheck, Star, Eye } from "lucide-react";
 import api, { fileUrl } from "@/lib/api";
 import { FEATURED, HERO_IMAGE } from "@/lib/destImages";
 import Header from "@/components/Header";
@@ -12,6 +12,8 @@ export default function Home() {
   const [counts, setCounts] = useState({});
   const [stats, setStats] = useState({ companies: 0, users: 0, countries: 0 });
   const [ads, setAds] = useState([]);
+  const [topCompanies, setTopCompanies] = useState([]);
+  const [sortMode, setSortMode] = useState("rating");
   const [focused, setFocused] = useState(false);
   const boxRef = useRef();
 

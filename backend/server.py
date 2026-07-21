@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import re
 import uuid
 import random
 import logging
@@ -18,8 +19,12 @@ from typing import List, Optional
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # ---------------------------------------------------------------------------
 # Config
@@ -55,6 +60,33 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
+
+
+def client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=client_ip, default_limits=[])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ---------------------------------------------------------------------------
 # Object storage helpers
@@ -120,6 +152,8 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="მომხმარებელი ვერ მოიძებნა")
+        if user.get("blocked") and user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია")
         user.pop("password_hash", None)
         return user
     except jwt.ExpiredSignatureError:
@@ -173,26 +207,52 @@ async def send_verification_email(recipient: str, code: str, purpose: str):
 def gen_code() -> str:
     return f"{random.randint(0, 999999):06d}"
 
+
+async def _purge_user_data(user_id: str, email: str, cids: list):
+    """Cascade-delete all rows that belong to a user / their companies to avoid orphans."""
+    if cids:
+        await db.messages.delete_many({"company_id": {"$in": cids}})
+        await db.reviews.delete_many({"company_id": {"$in": cids}})
+        await db.photo_comments.delete_many({"company_id": {"$in": cids}})
+        await db.support_messages.delete_many({"company_id": {"$in": cids}})
+        await db.typing.delete_many({"company_id": {"$in": cids}})
+        await db.company_views.delete_many({"company_id": {"$in": cids}})
+    await db.messages.delete_many({"visitor_id": user_id})
+    await db.reviews.delete_many({"user_id": user_id})
+    await db.photo_comments.delete_many({"user_id": user_id})
+    await db.support_messages.delete_many({"user_id": user_id})
+    await db.verifications.delete_many({"user_id": user_id})
+    if email:
+        await db.password_resets.delete_many({"email": email})
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 class RegisterInput(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=120)
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=6, max_length=200)
     role: str = "user"
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("სახელი სავალდებულოა")
+        return v
 
 class LoginInput(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=200)
 
 class ForgotPasswordInput(BaseModel):
     email: EmailStr
 
 class ResetPasswordInput(BaseModel):
     email: EmailStr
-    code: str
-    new_password: str
+    code: str = Field(..., min_length=4, max_length=10)
+    new_password: str = Field(..., min_length=6, max_length=200)
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -289,7 +349,8 @@ async def _send_email_code(user_id: str, email: str, field: str, purpose: str):
 # Auth endpoints
 # ---------------------------------------------------------------------------
 @api_router.post("/auth/register")
-async def register(data: RegisterInput):
+@limiter.limit("10/hour")
+async def register(request: Request, data: RegisterInput):
     email = data.email.lower()
     role = "company" if data.role == "company" else "user"
     if await db.users.find_one({"email": email}):
@@ -333,11 +394,14 @@ async def resend_verification(user: dict = Depends(get_current_user)):
     return {"status": "კოდი ხელახლა გაიგზავნა"}
 
 @api_router.post("/auth/login")
-async def login(data: LoginInput):
+@limiter.limit("10/minute")
+async def login(request: Request, data: LoginInput):
     email = data.email.lower()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="არასწორი მეილი ან პაროლი")
+    if user.get("blocked") and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია. დაუკავშირდით ადმინისტრაციას.")
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
     token = create_access_token(user["id"], email)
     return {"token": token, "user": user_response(user, company["id"] if company else None)}
@@ -348,7 +412,8 @@ async def me(user: dict = Depends(get_current_user)):
     return user_response(user, company["id"] if company else None)
 
 @api_router.post("/auth/forgot-password")
-async def forgot_password(data: ForgotPasswordInput):
+@limiter.limit("5/hour")
+async def forgot_password(request: Request, data: ForgotPasswordInput):
     email = data.email.lower()
     user = await db.users.find_one({"email": email})
     if user:
@@ -362,7 +427,8 @@ async def forgot_password(data: ForgotPasswordInput):
     return {"status": "თუ ეს მეილი რეგისტრირებულია, კოდი გაიგზავნა"}
 
 @api_router.post("/auth/reset-password")
-async def reset_password(data: ResetPasswordInput):
+@limiter.limit("10/hour")
+async def reset_password(request: Request, data: ResetPasswordInput):
     email = data.email.lower()
     rec = await db.password_resets.find_one({"email": email, "code": data.code})
     if not rec:
@@ -410,12 +476,19 @@ async def rating_stats(company_id: str) -> dict:
     return {"rating_avg": avg, "review_count": count}
 
 @api_router.get("/company/{company_id}")
-async def get_company(company_id: str):
+async def get_company(company_id: str, request: Request):
     company = await db.companies.find_one({"id": company_id})
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
-    await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
-    company["views"] = company.get("views", 0) + 1
+    viewer = client_ip(request)
+    already = await db.company_views.find_one({"company_id": company_id, "viewer": viewer})
+    if not already:
+        await db.company_views.insert_one({
+            "company_id": company_id, "viewer": viewer,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+        await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
+        company["views"] = company.get("views", 0) + 1
     company = public_company(company)
     company.update(await rating_stats(company_id))
     return company
@@ -643,11 +716,7 @@ async def confirm_deletion(data: CodeConfirm, user: dict = Depends(get_current_u
     companies = await db.companies.find({"owner_id": user["id"]}, {"_id": 0, "id": 1}).to_list(100)
     company_ids = [c["id"] for c in companies]
     await db.companies.delete_many({"owner_id": user["id"]})
-    if company_ids:
-        await db.messages.delete_many({"company_id": {"$in": company_ids}})
-    await db.messages.delete_many({"visitor_id": user["id"]})
-    await db.verifications.delete_many({"user_id": user["id"]})
-    await db.password_resets.delete_many({"email": user["email"]})
+    await _purge_user_data(user["id"], user["email"], company_ids)
     await db.users.delete_one({"id": user["id"]})
     return {"status": "ანგარიში წაიშალა"}
 
@@ -658,14 +727,15 @@ async def confirm_deletion(data: CodeConfirm, user: dict = Depends(get_current_u
 # Public directory endpoints
 # ---------------------------------------------------------------------------
 @api_router.get("/companies")
-async def list_companies(country: Optional[str] = None, city: Optional[str] = None, q: Optional[str] = None):
+async def list_companies(country: Optional[str] = None, city: Optional[str] = None,
+                         q: Optional[str] = None, sort: Optional[str] = None):
     query = {}
     if country:
         query["country"] = country
     if city:
         query["service_cities"] = city
     if q:
-        query["name"] = {"$regex": q, "$options": "i"}
+        query["name"] = {"$regex": re.escape(q), "$options": "i"}
     docs = await db.companies.find(query).to_list(1000)
     ids = [d["id"] for d in docs]
     stats = {}
@@ -681,7 +751,14 @@ async def list_companies(country: Optional[str] = None, city: Optional[str] = No
         card = company_card(d)
         card.update(stats.get(d["id"], {"rating_avg": 0, "review_count": 0}))
         card["views"] = d.get("views", 0)
+        card["created_at"] = d.get("created_at", "")
         cards.append(card)
+    if sort == "views":
+        cards.sort(key=lambda c: c.get("views", 0), reverse=True)
+    elif sort == "rating":
+        cards.sort(key=lambda c: (c.get("rating_avg", 0), c.get("review_count", 0)), reverse=True)
+    elif sort == "newest":
+        cards.sort(key=lambda c: c.get("created_at", ""), reverse=True)
     return cards
 
 @api_router.get("/companies-countries")
@@ -996,12 +1073,8 @@ async def admin_delete_user(user_id: str, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="ადმინის წაშლა შეუძლებელია")
     companies = await db.companies.find({"owner_id": user_id}, {"_id": 0, "id": 1}).to_list(100)
     cids = [c["id"] for c in companies]
+    await _purge_user_data(user_id, target.get("email", ""), cids)
     await db.companies.delete_many({"owner_id": user_id})
-    if cids:
-        await db.messages.delete_many({"company_id": {"$in": cids}})
-        await db.reviews.delete_many({"company_id": {"$in": cids}})
-    await db.messages.delete_many({"visitor_id": user_id})
-    await db.reviews.delete_many({"user_id": user_id})
     await db.users.delete_one({"id": user_id})
     return {"status": "მომხმარებელი წაიშალა"}
 
@@ -1010,11 +1083,12 @@ async def admin_delete_company(company_id: str, admin: dict = Depends(require_ad
     company = await db.companies.find_one({"id": company_id}, {"_id": 0})
     if not company:
         raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
+    owner_id = company["owner_id"]
+    owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "email": 1, "role": 1})
     await db.companies.delete_one({"id": company_id})
-    await db.messages.delete_many({"company_id": company_id})
-    await db.reviews.delete_many({"company_id": company_id})
-    await db.photo_comments.delete_many({"company_id": company_id})
-    await db.users.delete_one({"id": company["owner_id"]})
+    await _purge_user_data(owner_id, owner.get("email", "") if owner else "", [company_id])
+    if owner and owner.get("role") != "admin":
+        await db.users.delete_one({"id": owner_id})
     return {"status": "კომპანია წაიშალა"}
 
 @api_router.get("/admin/users/{user_id}")
@@ -1087,6 +1161,7 @@ async def startup():
         await db.companies.create_index("country")
         await db.messages.create_index("company_id")
         await db.messages.create_index("visitor_id")
+        await db.company_views.create_index([("company_id", 1), ("viewer", 1)], unique=True)
     except Exception as e:
         logger.error(f"Index creation failed: {e}")
     try:
