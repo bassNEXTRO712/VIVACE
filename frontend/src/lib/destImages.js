@@ -16,6 +16,12 @@ export const DEST_IMAGES = [
 export const HERO_IMAGE =
   "https://static.prod-images.emergentagent.com/jobs/2b6fe9a7-d8ff-4309-bb0e-2b0996d46492/images/7b3cfee188934e958493f7f2f254fe394ffa4419f9b8470dde4d72cb40ac39a7.jpeg";
 
+export const FEATURED = [
+  { name: "Italy", iso: "IT", ka: "იტალია", image: "https://images.pexels.com/photos/32133551/pexels-photo-32133551.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940" },
+  { name: "Germany", iso: "DE", ka: "გერმანია", image: "https://images.pexels.com/photos/25368304/pexels-photo-25368304.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940" },
+  { name: "Georgia", iso: "GE", ka: "საქართველო", image: "https://images.unsplash.com/photo-1607068618611-c1ddadd316e3?crop=entropy&cs=srgb&fm=jpg&q=85&w=940" },
+];
+
 export function imageFor(key) {
   let h = 0;
   const s = String(key || "");

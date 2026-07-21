@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, User } from "lucide-react";
-import api, { apiError } from "@/lib/api";
+import { Loader2, Camera } from "lucide-react";
+import api, { apiError, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,24 @@ export default function UserProfile() {
   const { user, setUser } = useAuth();
   const [name, setName] = useState(user?.name || "");
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const avatarRef = useRef();
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    setUploading(true);
+    try {
+      const { data } = await api.post("/account/avatar", fd);
+      setUser((u) => ({ ...u, avatar_url: data.url }));
+      toast.success("ფოტო განახლდა");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -29,8 +47,21 @@ export default function UserProfile() {
     <div className="max-w-2xl">
       <div className="bg-card border border-border rounded-lg p-6 md:p-8 space-y-6">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-2xl font-semibold uppercase">
-            {(user?.name || user?.email || "?").charAt(0)}
+          <div className="relative">
+            <div className="w-20 h-20 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-2xl font-semibold uppercase overflow-hidden">
+              {user?.avatar_url ? (
+                <img src={fileUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
+              ) : (
+                (user?.name || user?.email || "?").charAt(0)
+              )}
+            </div>
+            <input ref={avatarRef} type="file" accept="image/*" hidden
+              onChange={(e) => uploadAvatar(e.target.files[0])} />
+            <button data-testid="upload-avatar-button" onClick={() => avatarRef.current.click()}
+              disabled={uploading} aria-label="change photo"
+              className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center hover:bg-primary hover:text-primary-foreground transition-colors">
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+            </button>
           </div>
           <div>
             <h2 className="text-xl font-semibold">{user?.name}</h2>
@@ -57,3 +88,4 @@ export default function UserProfile() {
     </div>
   );
 }
+

@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Plane, LogOut, LayoutDashboard } from "lucide-react";
+import { Plane, LogOut, LayoutDashboard, Shield } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { fileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import NotificationBell from "@/components/NotificationBell";
 
 export default function Header({ transparent = false }) {
   const { user, logout } = useAuth();
@@ -23,12 +25,25 @@ export default function Header({ transparent = false }) {
         <nav className="flex items-center gap-2">
           {user ? (
             <>
-              <Button data-testid="nav-dashboard" variant="ghost" size="sm"
-                onClick={() => navigate("/dashboard")}>
-                <LayoutDashboard className="w-4 h-4 mr-1" /> ჩემი პროფილი
-              </Button>
-              <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold uppercase">
-                {(user.name || user.email || "?").charAt(0)}
+              {user.role === "admin" ? (
+                <Button data-testid="nav-admin" variant="ghost" size="sm" onClick={() => navigate("/admin")}>
+                  <Shield className="w-4 h-4 mr-1" /> ადმინ პანელი
+                </Button>
+              ) : (
+                <>
+                  <NotificationBell />
+                  <Button data-testid="nav-dashboard" variant="ghost" size="sm"
+                    onClick={() => navigate("/dashboard")}>
+                    <LayoutDashboard className="w-4 h-4 mr-1" /> ჩემი პროფილი
+                  </Button>
+                </>
+              )}
+              <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold uppercase overflow-hidden">
+                {user.avatar_url ? (
+                  <img src={fileUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  (user.name || user.email || "?").charAt(0)
+                )}
               </div>
               <Button data-testid="nav-logout" variant="ghost" size="icon"
                 onClick={() => { logout(); navigate("/"); }} aria-label="logout">

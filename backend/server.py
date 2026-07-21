@@ -119,6 +119,11 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="არასწორი ტოკენი")
 
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="მხოლოდ ადმინისთვის")
+    return user
+
 # ---------------------------------------------------------------------------
 # Email helper
 # ---------------------------------------------------------------------------
@@ -726,6 +731,91 @@ async def send_company_reply(visitor_id: str, data: ChatMessageInput, user: dict
 async def root():
     return {"message": "Company Profile API"}
 
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+@api_router.get("/notifications")
+async def notifications(user: dict = Depends(get_current_user)):
+    items = []
+    if user.get("role") == "company":
+        company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
+        if company:
+            docs = await db.messages.find(
+                {"company_id": company["id"], "sender": "visitor", "read_by_company": {"$ne": True}}, {"_id": 0}
+            ).sort("created_at", -1).to_list(1000)
+            grouped = {}
+            for m in docs:
+                grouped.setdefault(m["visitor_id"], {"title": m.get("visitor_name", "მომხმარებელი"),
+                                                     "subtitle": m["text"], "link": "/dashboard", "count": 0})
+                grouped[m["visitor_id"]]["count"] += 1
+            items = list(grouped.values())
+    else:
+        docs = await db.messages.find(
+            {"visitor_id": user["id"], "sender": "company", "read_by_visitor": {"$ne": True}}, {"_id": 0}
+        ).sort("created_at", -1).to_list(1000)
+        grouped = {}
+        for m in docs:
+            grouped.setdefault(m["company_id"], {"company_id": m["company_id"], "subtitle": m["text"], "count": 0})
+            grouped[m["company_id"]]["count"] += 1
+        for cid, g in grouped.items():
+            company = await db.companies.find_one({"id": cid}, {"_id": 0, "name": 1})
+            g["title"] = company["name"] if company else "კომპანია"
+            g["link"] = f"/company/{cid}"
+            items.append(g)
+    return {"count": sum(i["count"] for i in items), "items": items}
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
+@api_router.get("/admin/stats")
+async def admin_stats(admin: dict = Depends(require_admin)):
+    return {
+        "users": await db.users.count_documents({"role": "user"}),
+        "companies": await db.companies.count_documents({}),
+        "reviews": await db.reviews.count_documents({}),
+        "messages": await db.messages.count_documents({}),
+        "total_accounts": await db.users.count_documents({}),
+    }
+
+@api_router.get("/admin/users")
+async def admin_users(admin: dict = Depends(require_admin)):
+    docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(5000)
+    return docs
+
+@api_router.get("/admin/companies")
+async def admin_companies(admin: dict = Depends(require_admin)):
+    docs = await db.companies.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return [company_card(d) for d in docs]
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="მომხმარებელი ვერ მოიძებნა")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="ადმინის წაშლა შეუძლებელია")
+    companies = await db.companies.find({"owner_id": user_id}, {"_id": 0, "id": 1}).to_list(100)
+    cids = [c["id"] for c in companies]
+    await db.companies.delete_many({"owner_id": user_id})
+    if cids:
+        await db.messages.delete_many({"company_id": {"$in": cids}})
+        await db.reviews.delete_many({"company_id": {"$in": cids}})
+    await db.messages.delete_many({"visitor_id": user_id})
+    await db.reviews.delete_many({"user_id": user_id})
+    await db.users.delete_one({"id": user_id})
+    return {"status": "მომხმარებელი წაიშალა"}
+
+@api_router.delete("/admin/companies/{company_id}")
+async def admin_delete_company(company_id: str, admin: dict = Depends(require_admin)):
+    company = await db.companies.find_one({"id": company_id}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
+    await db.companies.delete_one({"id": company_id})
+    await db.messages.delete_many({"company_id": company_id})
+    await db.reviews.delete_many({"company_id": company_id})
+    await db.users.delete_one({"id": company["owner_id"]})
+    return {"status": "კომპანია წაიშალა"}
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
@@ -747,6 +837,24 @@ async def startup():
         await db.messages.create_index("visitor_id")
     except Exception as e:
         logger.error(f"Index creation failed: {e}")
+    try:
+        admin_email = os.environ["ADMIN_EMAIL"].lower()
+        admin_password = os.environ["ADMIN_PASSWORD"]
+        existing = await db.users.find_one({"email": admin_email})
+        if existing is None:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()), "email": admin_email, "name": "Admin",
+                "phone": "", "role": "admin", "avatar_url": "", "email_verified": True,
+                "password_hash": hash_password(admin_password),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        else:
+            updates = {"role": "admin", "email_verified": True}
+            if not verify_password(admin_password, existing["password_hash"]):
+                updates["password_hash"] = hash_password(admin_password)
+            await db.users.update_one({"email": admin_email}, {"$set": updates})
+    except Exception as e:
+        logger.error(f"Admin seed failed: {e}")
     try:
         init_storage()
         logger.info("Storage initialized")

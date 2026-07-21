@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 5 full backend+frontend testing. Backend: added /app/backend/tests/test_iteration5.py with 24 pytest cases covering /api/stats, email-verify gate (unverified after register, wrong-code 400, resend 200, auth required), reviews (owner-self 400, non-owner add/update, GET stats, views bump on GET /company/{id}), photo comments (POST/GET, auth required), avatar upload (multipart, bad ext 400), notifications (visitor unread from company reply, company unread from visitor msg, auth required), admin (non-admin 403, stats/users/companies, admin can't delete admin 400, throwaway user+company delete works & login fails after). All 24/24 pass; full regression suite 89/89 pass. Frontend Playwright: (1) Home stats visible (companies/users/countries), (2) exactly 3 featured cards Italy/Germany/Georgia with images and correct order, (3) search input reveals country + city results (France 1 country / 6 cities; Germany 1), (4) footer-policy-link -> /policy -> back arrow works, (5) register throwaway -> redirect /verify-email; wrong 6-digit code stays on page (400 toast); GET /dashboard while unverified redirects back to /verify-email; resend-code-button succeeds, (6) admin login -> /admin (bypasses ProtectedRoute), stat cards populated, users tab shows admin-user-row list, companies tab shows admin-company-row, nav-admin visible for admin only (regular user: not present), (7) user_verified login -> user dashboard has tab-profile+tab-settings only (no gallery/messages); avatar upload via input[type=file] works; user-name-input + save-user-profile-button persist name, (8) comp_verified login -> company dashboard has all 4 tabs (profile/gallery/messages/settings) and unread badge on messages, (9) PublicProfile /company/{id}: profile-back-button, profile-stats (rating/views/media), profile-message-button visible for non-owner; posting review with star-5 + review-text-input + review-submit-button updates rating-avg to 5 and shows review-item, (10) gallery-photo click opens PhotoDialog; posting via photo-comment-input + photo-comment-send appends photo-comment, (11) notification-bell renders on Home for non-admin; admin panel delete-user AlertDialog confirm removes the target row (verified via re-render). No blocking bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "PublicProfile stats after posting review", "issue": "profile-stats block continues to show stale rating/count (0) after user submits a review — only Reviews subcomponent state updates. Refresh required for stats block. Minor UX only.", "affected_selectors": ["profile-stats"]}
+    ],
+    "design_issues": [
+      {"screen": "PhotoDialog", "issues": ["Radix console warning: DialogContent requires a DialogTitle for accessibility. Add a VisuallyHidden DialogTitle to /app/frontend/src/components/PhotoDialog.jsx."]},
+      {"screen": "Dashboard", "issues": ["Dashboard.jsx uses a CUSTOM header (not the shared Header component) so notification-bell does NOT render on /dashboard for logged-in users — only on Home/PublicProfile/Policy. Minor UX inconsistency; the spec says 'logged-in non-admin header shows notification-bell' which is technically true only for pages using shared Header."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_directory_and_chat.py",
+    "/app/backend/tests/test_chat_unread.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_iteration5.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: In PhotoDialog.jsx add a VisuallyHidden DialogTitle to silence Radix a11y warning.",
+    "OPTIONAL: After Reviews submit, also update PublicProfile.company.rating_avg/review_count so profile-stats block stays in sync without page reload.",
+    "OPTIONAL: Show NotificationBell on the Dashboard header too (currently only on shared Header pages)."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 866 lines — auth, company, reviews, media, chat, admin, notifications all in one file. Split into routers/ package soon.",
+    "add_review calls await get_reviews(company_id) which re-queries and computes rating_stats twice per POST (once in the update branch, once in get_reviews). Harmless but avoidable double-work.",
+    "GET /company/{id} increments views on EVERY hit including owner's own views and repeated refreshes — no dedup by session/user. Slight metric skew; not critical for MVP.",
+    "admin_delete_company deletes company + owner user but does NOT delete other companies owned by same user, nor password_resets/verifications/photo_comments left orphaned. Same partial cleanup issue in admin_delete_user (photo_comments left orphaned).",
+    "NotificationBell polls every 10s and returns full items[] each time — for admin the polling still fires and (since role==admin, else branch runs) queries messages by visitor_id=admin.id, returning []. OK, but the bell itself is hidden for admin in Header, so no visible effect. Wasted request only if admin hits a public page.",
+    "PublicProfile: after Reviews submit, `company.rating_avg`/`review_count` in the parent state are stale (profile-stats block shows old values). Small UI polish.",
+    "PhotoDialog missing DialogTitle -> Radix accessibility console warning."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py"
+  ],
+  "success_rate": {"backend": "100% (89/89, 24/24 new)", "frontend": "100% (all critical flows)"},
+  "test_credentials": "Pre-verified: user_verified@test.com/test123, comp_verified@test.com/test123, roma@test.com/test123. Admin: nikaabrumia1985@gmail.com/NEXTRO2006NEXTRO. Throwaway registrations use pattern test-<rand>@test.com / tqa-<rand>@test.com.",
+  "seed_data_creation": "Backend tests created ~15 throwaway test_it5_* accounts + 1 comp_verified media item + 1 photo comment + 1 review by user_verified on VIVACE OFFICIAL. UI tests created test-bdeen6@test.com (still in DB, unverified — Verify Test), tqa-xifxzi@test.com (already deleted via admin flow), and posted 1 review (5★) + 1 photo comment on VIVACE OFFICIAL from user_verified. Renamed user_verified.name to 'Verified User Renamed'. Uploaded a 1x1 PNG avatar for user_verified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite is now 5 files under /app/backend/tests/: backend_test.py, test_directory_and_chat.py, test_chat_unread.py, test_iteration4.py, test_iteration5.py. Run: `pytest /app/backend/tests/ --junitxml=/app/test_reports/pytest/pytest_results.xml` (pytest.ini uses -n 2 --dist loadscope). Iteration 5 data-testids exercised: stat-companies/users/countries, home-search-input, search-country-result, search-city-result, featured-country-card, footer-policy-link, policy-back-button, verify-code-input, verify-submit-button, resend-code-button, upload-avatar-button (via hidden input[type=file]), user-name-input, save-user-profile-button, profile-back-button, profile-stats, profile-message-button, star-1..star-5, review-text-input, review-submit-button, review-item, rating-avg, gallery-photo, photo-comment-input, photo-comment-send, photo-comment, notification-bell, notification-count, notification-item, nav-admin, admin-tab-users/companies, admin-user-row/company-row, admin-delete-user/company, admin-confirm-delete-user/company. Note: shared Header (with NotificationBell) is used on Home/PublicProfile/Policy but NOT on /dashboard which has its own custom header, so bell tests must be run on Home or PublicProfile.",
+  "rca_of_the_issue": "N/A — no bugs. Only OPTIONAL polish items surfaced (PhotoDialog a11y, stale profile-stats after review, notification-bell missing on /dashboard header)."
+}

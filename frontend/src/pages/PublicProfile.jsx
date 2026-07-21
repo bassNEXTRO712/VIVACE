@@ -1,20 +1,25 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film, MessageCircle } from "lucide-react";
+import { Building2, MapPin, Phone, Mail, Globe, Loader2, Film, MessageCircle, ArrowLeft, Star, Eye, Images } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import api, { fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Header from "@/components/Header";
 import ChatWidget from "@/components/ChatWidget";
+import Reviews from "@/components/Reviews";
+import PhotoDialog from "@/components/PhotoDialog";
 
 export default function PublicProfile() {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState(null);
 
   useEffect(() => {
     api
@@ -54,6 +59,10 @@ export default function PublicProfile() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 -mt-16 relative z-10">
+        <button data-testid="profile-back-button" onClick={() => navigate(-1)}
+          className="mb-3 text-white/90 hover:text-white text-sm flex items-center gap-1 drop-shadow">
+          <ArrowLeft className="w-4 h-4" /> უკან
+        </button>
         <div className="flex flex-wrap items-end gap-5">
           <div className="w-28 h-28 rounded-xl overflow-hidden bg-card border-2 border-border shadow-lg flex-shrink-0">
             {company.logo_url ? (
@@ -78,6 +87,21 @@ export default function PublicProfile() {
               <MessageCircle className="w-4 h-4 mr-2" /> შეტყობინების გაგზავნა
             </Button>
           )}
+        </div>
+
+        {/* Stats */}
+        <div className="flex flex-wrap items-center gap-6 mt-6 text-sm" data-testid="profile-stats">
+          <div className="flex items-center gap-2">
+            <Star className="w-4 h-4 fill-primary text-primary" />
+            <span className="font-semibold">{company.rating_avg || 0}</span>
+            <span className="text-muted-foreground">({company.review_count || 0} შეფასება)</span>
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Eye className="w-4 h-4 text-primary" /> {company.views || 0} ნახვა
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Images className="w-4 h-4 text-primary" /> {media.length} მედია
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
@@ -128,23 +152,34 @@ export default function PublicProfile() {
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {media.map((m) => (
-                    <div key={m.id} className="relative rounded-md overflow-hidden border border-border aspect-square bg-secondary">
+                    <button key={m.id} data-testid="gallery-photo" onClick={() => setSelectedMedia(m)}
+                      className="group relative rounded-md overflow-hidden border border-border aspect-square bg-secondary">
                       {m.type === "video" ? (
-                        <video src={fileUrl(m.url)} className="w-full h-full object-cover" controls />
+                        <video src={fileUrl(m.url)} className="w-full h-full object-cover" />
                       ) : (
-                        <img src={fileUrl(m.url)} alt="" className="w-full h-full object-cover" />
+                        <img src={fileUrl(m.url)} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                       )}
-                    </div>
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <MessageCircle className="w-6 h-6 text-white" />
+                      </div>
+                      {m.type === "video" && (
+                        <span className="absolute top-2 left-2 bg-black/60 rounded px-1.5 py-0.5">
+                          <Film className="w-3 h-3 text-white" />
+                        </span>
+                      )}
+                    </button>
                   ))}
                 </div>
               )}
             </div>
+            <Reviews companyId={company.id} isOwner={user?.company_id === company.id} />
           </div>
         </div>
         <div className="h-16" />
       </div>
       <ChatWidget companyId={company.id} companyName={company.name}
         isOwner={user?.company_id === company.id} open={chatOpen} setOpen={setChatOpen} />
+      <PhotoDialog companyId={company.id} media={selectedMedia} onClose={() => setSelectedMedia(null)} />
     </div>
   );
 }

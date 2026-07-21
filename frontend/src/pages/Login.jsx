@@ -22,7 +22,9 @@ export default function Login() {
       const { data } = await api.post("/auth/login", { email, password });
       login(data.token, data.user);
       toast.success("კეთილი იყოს თქვენი დაბრუნება!");
-      navigate("/dashboard");
+      if (data.user.role === "admin") navigate("/admin");
+      else if (!data.user.email_verified) navigate("/verify-email");
+      else navigate("/dashboard");
     } catch (err) {
       toast.error(apiError(err));
     } finally {

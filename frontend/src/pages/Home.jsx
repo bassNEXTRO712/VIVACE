@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { Country, City } from "country-state-city";
-import { Search, MapPin, Building2, ArrowRight, Globe2, Users, Sparkles } from "lucide-react";
+import { Search, MapPin, Building2, ArrowRight, Globe2, Users, Sparkles, MessageCircle, ShieldCheck, Star } from "lucide-react";
 import api from "@/lib/api";
-import { imageFor, HERO_IMAGE } from "@/lib/destImages";
+import { FEATURED, HERO_IMAGE } from "@/lib/destImages";
 import Header from "@/components/Header";
 
 export default function Home() {
@@ -38,15 +38,6 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  const sortedCountries = useMemo(() => {
-    return [...countries].sort((a, b) => {
-      const ca = counts[a.name] || 0;
-      const cb = counts[b.name] || 0;
-      if (ca !== cb) return cb - ca;
-      return a.name.localeCompare(b.name);
-    });
-  }, [countries, counts]);
-
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length < 2) return { countries: [], cities: [] };
@@ -67,7 +58,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="absolute inset-x-0 top-0 h-[560px] overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-[600px] overflow-hidden">
         <img src={HERO_IMAGE} alt="" className="w-full h-full object-cover opacity-40" />
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
       </div>
@@ -75,7 +66,6 @@ export default function Home() {
       <div className="relative z-20">
         <Header transparent />
 
-        {/* Hero */}
         <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-16 pb-10 text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/40 bg-primary/10 text-primary text-sm mb-6">
             <Sparkles className="w-4 h-4" /> ტურისტული კომპანიების პლატფორმა
@@ -87,7 +77,6 @@ export default function Home() {
             აღმოაჩინე სანდო ტურისტული კომპანიები ქვეყნებისა და ქალაქების მიხედვით. დაუკავშირდი პირდაპირ ჩატით.
           </p>
 
-          {/* Search */}
           <div ref={boxRef} className="relative max-w-2xl mx-auto">
             <div className="flex items-center bg-card border border-border rounded-full pl-5 pr-2 py-2 shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
               <Search className="w-5 h-5 text-muted-foreground mr-3 flex-shrink-0" />
@@ -96,7 +85,7 @@ export default function Home() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onFocus={() => setFocused(true)}
-                placeholder="მოძებნე ქვეყანა ან ქალაქი..."
+                placeholder="მოძებნე ნებისმიერი ქვეყანა ან ქალაქი..."
                 className="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-base"
               />
             </div>
@@ -109,6 +98,9 @@ export default function Home() {
                     className="w-full px-4 py-3 flex items-center gap-3 hover:bg-secondary transition-colors">
                     <span className="text-xl">{c.flag}</span>
                     <span className="flex-1">{c.name}</span>
+                    {counts[c.name] > 0 && (
+                      <span className="text-xs text-primary">{counts[c.name]} კომპანია</span>
+                    )}
                     <Globe2 className="w-4 h-4 text-muted-foreground" />
                   </button>
                 ))}
@@ -125,7 +117,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Stats */}
           <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 mt-10 text-sm">
             <div className="flex items-center gap-2" data-testid="stat-companies">
               <Building2 className="w-4 h-4 text-primary" />
@@ -145,37 +136,40 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Country grid */}
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-20">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl sm:text-3xl font-semibold">მიმართულებები</h2>
-            <span className="text-sm text-muted-foreground">{countries.length} ქვეყანა</span>
+        {/* Featured countries */}
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-2xl sm:text-3xl font-semibold">პოპულარული მიმართულებები</h2>
+            <span className="text-sm text-muted-foreground">TOP 3</span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {sortedCountries.slice(0, 60).map((c) => {
-              const count = counts[c.name] || 0;
+          <p className="text-muted-foreground text-sm mb-6">დანარჩენი ქვეყნების სანახავად გამოიყენე ძებნა ↑</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {FEATURED.map((f, idx) => {
+              const count = counts[f.name] || 0;
               return (
-                <button
-                  key={c.isoCode}
-                  data-testid="country-card"
-                  onClick={() => goCountry(c.name)}
-                  className="group text-left bg-card border border-border rounded-xl overflow-hidden hover:border-primary transition-colors"
-                >
-                  <div className="relative h-40 overflow-hidden">
-                    <img src={imageFor(c.name)} alt={c.name} loading="lazy"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-card via-card/30 to-transparent" />
+                <button key={f.iso} data-testid="featured-country-card"
+                  onClick={() => goCountry(f.name)}
+                  className="group text-left bg-card border border-border rounded-2xl overflow-hidden hover:border-primary transition-colors">
+                  <div className="relative h-56 overflow-hidden">
+                    <img src={f.image} alt={f.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-card via-card/20 to-transparent" />
+                    <span className="absolute top-4 left-4 flex items-center gap-2 bg-black/40 backdrop-blur px-2 py-1 rounded-full text-xs font-semibold">
+                      #{idx + 1} რეიტინგში
+                    </span>
                     {count > 0 && (
-                      <span className="absolute top-3 right-3 bg-primary text-primary-foreground text-xs font-semibold px-2 py-1 rounded-full">
+                      <span className="absolute top-4 right-4 bg-primary text-primary-foreground text-xs font-semibold px-2 py-1 rounded-full">
                         {count} კომპანია
                       </span>
                     )}
-                    <span className="absolute top-3 left-3 text-2xl">{c.flag}</span>
+                    <div className="absolute bottom-4 left-4">
+                      <h3 className="text-2xl font-bold drop-shadow">{f.ka}</h3>
+                      <p className="text-sm text-white/80">{f.name}</p>
+                    </div>
                   </div>
                   <div className="p-4">
-                    <h3 className="font-semibold uppercase tracking-wide text-sm truncate">{c.name}</h3>
-                    <p className="text-primary text-sm mt-2 flex items-center gap-1 group-hover:gap-2 transition-all">
-                      აღმოაჩინე <ArrowRight className="w-3 h-3" />
+                    <p className="text-primary text-sm flex items-center gap-1 group-hover:gap-2 transition-all">
+                      აღმოაჩინე კომპანიები <ArrowRight className="w-4 h-4" />
                     </p>
                   </div>
                 </button>
@@ -183,6 +177,62 @@ export default function Home() {
             })}
           </div>
         </section>
+
+        {/* How it works */}
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
+          <h2 className="text-2xl sm:text-3xl font-semibold mb-8">როგორ მუშაობს VIVACE</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              { icon: Search, t: "მოძებნე", d: "აირჩიე ქვეყანა ან ქალაქი და ნახე იქ რეგისტრირებული ტურისტული კომპანიები." },
+              { icon: MessageCircle, t: "დაუკავშირდი", d: "დაწერე კომპანიას პირდაპირ ჩატით, დაუსვი კითხვები და მიიღე პასუხი." },
+              { icon: Star, t: "შეაფასე", d: "დატოვე შეფასება 5-ვარსკვლავიანი სისტემით და კომენტარი გამოცდილების შესახებ." },
+            ].map((s, i) => (
+              <div key={i} className="bg-card border border-border rounded-xl p-6">
+                <div className="w-11 h-11 rounded-lg bg-primary/15 text-primary flex items-center justify-center mb-4">
+                  <s.icon className="w-5 h-5" />
+                </div>
+                <h3 className="font-semibold mb-2">{s.t}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{s.d}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
+          <div className="bg-card border border-border rounded-2xl p-8 md:p-12 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-semibold mb-2">ხართ ტურისტული კომპანია?</h2>
+              <p className="text-muted-foreground">დარეგისტრირდი, შექმენი პროფილი და მიაღწიე ახალ კლიენტებამდე.</p>
+            </div>
+            <button data-testid="cta-register" onClick={() => navigate("/register")}
+              className="bg-primary hover:bg-orange-600 transition-colors text-primary-foreground px-6 py-3 rounded-full font-medium flex items-center gap-2 whitespace-nowrap">
+              დაიწყე ახლა <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <footer className="border-t border-border bg-card/40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+            <div>
+              <span className="text-xl font-bold">VIVACE</span>
+              <p className="text-sm text-muted-foreground mt-3">ტურისტული კომპანიების პლატფორმა — აღმოაჩინე, დაუკავშირდი, იმოგზაურე.</p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-3 flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-primary" /> სამართლებრივი</h4>
+              <Link to="/policy" data-testid="footer-policy-link" className="text-sm text-muted-foreground hover:text-primary block">VIVACE Policy და წესები</Link>
+            </div>
+            <div>
+              <h4 className="font-medium mb-3">დაწყება</h4>
+              <Link to="/register" className="text-sm text-muted-foreground hover:text-primary block">რეგისტრაცია</Link>
+              <Link to="/login" className="text-sm text-muted-foreground hover:text-primary block mt-1">ავტორიზაცია</Link>
+            </div>
+          </div>
+          <div className="border-t border-border py-4 text-center text-xs text-muted-foreground">
+            © 2026 VIVACE. ყველა უფლება დაცულია.
+          </div>
+        </footer>
       </div>
     </div>
   );

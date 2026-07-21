@@ -23,8 +23,8 @@ export default function Register() {
     try {
       const { data } = await api.post("/auth/register", { name, email, password, role });
       login(data.token, data.user);
-      toast.success("ანგარიში შეიქმნა!");
-      navigate("/dashboard");
+      toast.success("ანგარიში შეიქმნა! დაადასტურეთ მეილი.");
+      navigate("/verify-email");
     } catch (err) {
       toast.error(apiError(err));
     } finally {
