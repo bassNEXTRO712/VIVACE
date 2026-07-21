@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Building2, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ export default function Login() {
       toast.success("კეთილი იყოს თქვენი დაბრუნება!");
       if (data.user.role === "admin") navigate("/admin");
       else if (!data.user.email_verified) navigate("/verify-email");
-      else navigate("/dashboard");
+      else navigate("/");
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -36,10 +36,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-11 h-11 rounded-lg bg-primary flex items-center justify-center">
-            <Building2 className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <span className="text-xl font-semibold">კომპანიის პროფილი</span>
+          <img src="/vivace-logo-light.png" alt="VIVACE" className="h-11 w-auto object-contain" />
+          <span className="text-xl font-semibold">VIVACE</span>
         </div>
         <div className="bg-card border border-border rounded-lg p-8 shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
           <h1 className="text-2xl font-semibold mb-1">ავტორიზაცია</h1>

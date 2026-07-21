@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Plane, LogOut, LayoutDashboard, Shield } from "lucide-react";
+import { LogOut, LayoutDashboard, Shield } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { fileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -19,8 +19,8 @@ export default function Header({ transparent = false }) {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         <Link to="/" data-testid="brand-logo" className="flex items-center gap-2 group">
+          <img src="/vivace-logo-light.png" alt="VIVACE" className="h-9 w-auto object-contain" />
           <span className="text-2xl font-bold tracking-tight text-foreground">VIVACE</span>
-          <Plane className="w-5 h-5 text-primary group-hover:translate-x-1 transition-transform" />
         </Link>
         <nav className="flex items-center gap-2">
           {user ? (

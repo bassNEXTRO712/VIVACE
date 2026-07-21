@@ -49,7 +49,7 @@ const PublicOnly = ({ children }) => {
   if (loading) return null;
   if (user && user.role === "admin") return <Navigate to="/admin" replace />;
   if (user && !user.email_verified) return <Navigate to="/verify-email" replace />;
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/" replace />;
   return children;
 };
 

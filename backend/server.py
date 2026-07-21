@@ -136,15 +136,25 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # Email helper
 # ---------------------------------------------------------------------------
 async def send_verification_email(recipient: str, code: str, purpose: str):
-    subject = "დადასტურების კოდი"
+    subject = "VIVACE — დადასტურების კოდი"
     html = f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a20;padding:32px;font-family:Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a20;padding:40px 16px;font-family:'Segoe UI',Arial,sans-serif;">
       <tr><td align="center">
-        <table width="480" cellpadding="0" cellspacing="0" style="background:#16162a;border-radius:12px;padding:32px;">
-          <tr><td style="color:#ffffff;font-size:20px;font-weight:bold;padding-bottom:16px;">დადასტურების კოდი</td></tr>
-          <tr><td style="color:#cbd5e1;font-size:14px;padding-bottom:24px;">{purpose}</td></tr>
-          <tr><td align="center" style="background:#f97316;border-radius:8px;padding:16px;color:#ffffff;font-size:32px;font-weight:bold;letter-spacing:8px;">{code}</td></tr>
-          <tr><td style="color:#94a3b8;font-size:12px;padding-top:24px;">კოდი მოქმედია 10 წუთის განმავლობაში.</td></tr>
+        <table width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#16162a;border:1px solid #262645;border-radius:16px;overflow:hidden;">
+          <tr><td style="background:#0f0f24;padding:24px 32px;border-bottom:1px solid #262645;">
+            <span style="color:#ffffff;font-size:24px;font-weight:800;letter-spacing:1px;">VIVACE</span>
+            <span style="color:#f97316;font-size:22px;">&#9992;</span>
+          </td></tr>
+          <tr><td style="padding:32px;">
+            <div style="color:#ffffff;font-size:20px;font-weight:700;padding-bottom:8px;">დადასტურების კოდი</div>
+            <div style="color:#cbd5e1;font-size:14px;line-height:1.6;padding-bottom:24px;">{purpose}</div>
+            <div align="center" style="background:linear-gradient(135deg,#f97316,#ea580c);border-radius:10px;padding:18px;color:#ffffff;font-size:34px;font-weight:800;letter-spacing:10px;">{code}</div>
+            <div style="color:#94a3b8;font-size:12px;padding-top:24px;line-height:1.6;">კოდი მოქმედია 10 წუთის განმავლობაში. თუ ეს თქვენ არ მოგითხოვიათ, უბრალოდ იგნორირება გაუკეთეთ ამ წერილს.</div>
+          </td></tr>
+          <tr><td style="background:#0f0f24;padding:20px 32px;border-top:1px solid #262645;text-align:center;">
+            <div style="color:#94a3b8;font-size:13px;">გისურვებთ სასიამოვნო მოგზაურობას,</div>
+            <div style="color:#f97316;font-size:14px;font-weight:700;padding-top:4px;">VIVACE Team</div>
+          </td></tr>
         </table>
       </td></tr>
     </table>
@@ -657,10 +667,19 @@ async def list_companies(country: Optional[str] = None, city: Optional[str] = No
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
     docs = await db.companies.find(query).to_list(1000)
+    ids = [d["id"] for d in docs]
+    stats = {}
+    if ids:
+        pipeline = [
+            {"$match": {"company_id": {"$in": ids}}},
+            {"$group": {"_id": "$company_id", "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+        ]
+        async for r in db.reviews.aggregate(pipeline):
+            stats[r["_id"]] = {"rating_avg": round(r["avg"], 1), "review_count": r["count"]}
     cards = []
     for d in docs:
         card = company_card(d)
-        card.update(await rating_stats(d["id"]))
+        card.update(stats.get(d["id"], {"rating_avg": 0, "review_count": 0}))
         card["views"] = d.get("views", 0)
         cards.append(card)
     return cards
