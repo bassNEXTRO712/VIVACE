@@ -155,7 +155,7 @@ def client_ip(request: Request) -> str:
 limiter = Limiter(key_func=client_ip, default_limits=[])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-ნაწილი 2/4
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -321,7 +321,7 @@ async def _send_email_code(user_id: str, email: str, field: str, purpose: str):
         "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
     })
     await send_verification_email(email, code, purpose)
-ნაწილი 3/4
+
 @api_router.post("/auth/register")
 @limiter.limit("10/hour")
 async def register(request: Request, data: RegisterInput):
@@ -563,7 +563,7 @@ async def post_support_message(request: Request, user: dict = Depends(get_curren
 @api_router.get("/support/messages")
 async def get_my_support_messages(user: dict = Depends(get_current_user)):
     return await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(200) or []
-ნაწილი 4/4
+
 @api_router.get("/company/{company_id}/reviews")
 async def get_company_reviews(company_id: str):
     return await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(200) or []

@@ -23,18 +23,31 @@ function Stars({ value, size = "w-4 h-4", onSelect }) {
 
 export default function Reviews({ companyId, isOwner, onStats }) {
   const { user } = useAuth();
-  const [data, setData] = useState({ reviews: [], rating_avg: 0, review_count: 0 });
+  const [reviews, setReviews] = useState([]);
+  const [ratingAvg, setRatingAvg] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
   const [rating, setRating] = useState(5);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
+  const calcStats = (list) => {
+    const count = list.length;
+    const avg = count ? Math.round((list.reduce((s, r) => s + r.rating, 0) / count) * 10) / 10 : 0;
+    return { avg, count };
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
         const { data } = await api.get(`/company/${companyId}/reviews`);
-        setData(data);
-        onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
+        const list = Array.isArray(data) ? data : [];
+        const { avg, count } = calcStats(list);
+        setReviews(list);
+        setRatingAvg(avg);
+        setReviewCount(count);
+        onStats && onStats({ rating_avg: avg, review_count: count });
+      } catch (_) {
       } finally {
         setLoading(false);
       }
@@ -44,12 +57,18 @@ export default function Reviews({ companyId, isOwner, onStats }) {
   }, [companyId]);
 
   const submit = async () => {
+    if (!rating) return;
     setSending(true);
     try {
       const { data } = await api.post(`/company/${companyId}/reviews`, { rating, text });
-      setData(data);
-      onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
+      const newList = [...reviews, data];
+      const { avg, count } = calcStats(newList);
+      setReviews(newList);
+      setRatingAvg(avg);
+      setReviewCount(count);
+      onStats && onStats({ rating_avg: avg, review_count: count });
       setText("");
+      setRating(5);
       toast.success("შეფასება დაემატა");
     } catch (err) {
       toast.error(apiError(err));
@@ -63,10 +82,10 @@ export default function Reviews({ companyId, isOwner, onStats }) {
   return (
     <div className="bg-card border border-border rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-medium">შეფასებები ({data.review_count})</h3>
+        <h3 className="font-medium">შეფასებები ({reviewCount})</h3>
         <div className="flex items-center gap-2">
-          <Stars value={Math.round(data.rating_avg)} />
-          <span className="font-semibold" data-testid="rating-avg">{data.rating_avg || 0}</span>
+          <Stars value={Math.round(ratingAvg)} />
+          <span className="font-semibold" data-testid="rating-avg">{ratingAvg || 0}</span>
         </div>
       </div>
 
@@ -85,11 +104,11 @@ export default function Reviews({ companyId, isOwner, onStats }) {
         </div>
       )}
 
-      {data.reviews.length === 0 ? (
+      {reviews.length === 0 ? (
         <p className="text-sm text-muted-foreground py-4 text-center">ჯერ არავის შეუფასებია</p>
       ) : (
         <div className="space-y-4">
-          {data.reviews.map((r) => (
+          {reviews.map((r) => (
             <div key={r.id} data-testid="review-item" className="flex gap-3">
               <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sm font-semibold uppercase flex-shrink-0 overflow-hidden">
                 {r.avatar_url ? <img src={fileUrl(r.avatar_url)} alt="" className="w-full h-full object-cover" /> : (r.user_name || "?").charAt(0)}
