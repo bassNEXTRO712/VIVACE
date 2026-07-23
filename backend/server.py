@@ -674,6 +674,8 @@ async def send_support_message(request: Request, user: dict = Depends(get_curren
         "user_id": user["id"],
         "user_name": user.get("name", ""),
         "text": body.get("text", ""),
+        "read": False,
+        "read_at": None,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.support_messages.insert_one(sup_doc)
@@ -687,6 +689,13 @@ async def support_inbox(user: dict = Depends(get_current_user)):
 
 @api_router.get("/support/inbox/{item_id}")
 async def support_inbox_item(item_id: str, user: dict = Depends(get_current_user)):
+    # როცა ადმინი ხსნის ჩატს, ვნიშნავთ ამ მომხმარებლის ყველა წაუკითხავ მესიჯს როგორც წაკითხულს
+    now_str = datetime.now(timezone.utc).isoformat()
+    await db.support_messages.update_many(
+        {"$or": [{"id": item_id}, {"user_id": item_id}], "read": False},
+        {"$set": {"read": True, "read_at": now_str}}
+    )
+    
     doc = await db.support_messages.find_one({"id": item_id}, {"_id": 0})
     if not doc:
         docs = await db.support_messages.find({"user_id": item_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
@@ -701,16 +710,18 @@ async def reply_support_inbox_item(item_id: str, request: Request, user: dict = 
     if parent_msg:
         target_user_id = parent_msg.get("user_id", item_id)
 
+    now_str = datetime.now(timezone.utc).isoformat()
     sup_doc = {
         "id": str(uuid.uuid4()),
         "user_id": target_user_id,
         "user_name": user.get("name", "ადმინისტრატორი"),
         "text": body.get("text", ""),
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "read": False,
+        "read_at": None,
+        "created_at": now_str
     }
     await db.support_messages.insert_one(sup_doc)
     sup_doc.pop("_id", None)
-    # ფრონტენდი ელის მასივს (array), ამიტომ ვუბრუნებთ სიაში ჩასმულს
     return [sup_doc]
 
 @api_router.get("/notifications")
