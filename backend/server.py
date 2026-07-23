@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # ---------------------------------------------------------------------------
-# CORS Configuration
+# CORS Configuration (Added)
 # ---------------------------------------------------------------------------
 origins = [
     "https://vivace-lime.vercel.app",
@@ -225,6 +225,24 @@ async def send_verification_email(recipient: str, code: str, purpose: str):
 def gen_code() -> str:
     return f"{random.randint(0, 999999):06d}"
 
+
+async def _purge_user_data(user_id: str, email: str, cids: list):
+    """Cascade-delete all rows that belong to a user / their companies to avoid orphans."""
+    if cids:
+        await db.messages.delete_many({"company_id": {"$in": cids}})
+        await db.reviews.delete_many({"company_id": {"$in": cids}})
+        await db.photo_comments.delete_many({"company_id": {"$in": cids}})
+        await db.support_messages.delete_many({"company_id": {"$in": cids}})
+        await db.typing.delete_many({"company_id": {"$in": cids}})
+        await db.company_views.delete_many({"company_id": {"$in": cids}})
+    await db.messages.delete_many({"visitor_id": user_id})
+    await db.reviews.delete_many({"user_id": user_id})
+    await db.photo_comments.delete_many({"user_id": user_id})
+    await db.support_messages.delete_many({"user_id": user_id})
+    await db.verifications.delete_many({"user_id": user_id})
+    if email:
+        await db.password_resets.delete_many({"email": email})
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -288,8 +306,43 @@ class CommentInput(BaseModel):
     text: str = Field(default="", max_length=1000)
     image_url: str = Field(default="")
 
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+
+class BlockInput(BaseModel):
+    blocked: bool
+
+class VerifyInput(BaseModel):
+    verified: bool
+
 class SupportInput(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
+
+class AdInput(BaseModel):
+    title: str = Field(default="", max_length=200)
+    link: str = Field(default="", max_length=500)
+    media_url: str
+    media_type: str = "image"
+
+def company_card(doc: dict) -> dict:
+    return {
+        "id": doc.get("id"),
+        "name": doc.get("name"),
+        "country": doc.get("country", ""),
+        "service_cities": doc.get("service_cities", []),
+        "address": doc.get("address", ""),
+        "description": doc.get("description", ""),
+        "logo_url": doc.get("logo_url", ""),
+        "cover_url": doc.get("cover_url", ""),
+        "verified": doc.get("verified", False),
+        "media_count": len(doc.get("media", [])),
+    }
+
+def public_company(doc: dict) -> dict:
+    doc.pop("_id", None)
+    doc.pop("owner_id", None)
+    return doc
 
 def user_response(user: dict, company_id=None) -> dict:
     return {
@@ -454,16 +507,15 @@ async def get_company(company_id: str, request: Request):
         })
         await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
         company["views"] = company.get("views", 0) + 1
-    company.pop("_id", None)
-    company.pop("owner_id", None)
+    company = public_company(company)
     company.update(await rating_stats(company_id))
     return company
 
 @api_router.get("/company/{company_id}/reviews")
 async def get_reviews(company_id: str):
     docs = await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    stats_data = await rating_stats(company_id)
-    return {"reviews": docs, **stats_data}
+    stats = await rating_stats(company_id)
+    return {"reviews": docs, **stats}
 
 @api_router.post("/company/{company_id}/reviews")
 async def add_review(company_id: str, data: ReviewInput, user: dict = Depends(get_current_user)):
@@ -642,13 +694,13 @@ async def request_email_change(data: ContactChangeRequest, user: dict = Depends(
     if await db.users.find_one({"email": new_email}):
         raise HTTPException(status_code=400, detail="ეს მეილი უკვე გამოყენებულია")
     await _create_verification(user["id"], "email", new_email, new_email,
-                              f"დაადასტურეთ ახალი მეილი: {new_email}")
+                               f"დაადასტურეთ ახალი მეილი: {new_email}")
     return {"status": "კოდი გაიგზავნა ახალ მეილზე"}
 
 @api_router.post("/account/request-phone-change")
 async def request_phone_change(data: ContactChangeRequest, user: dict = Depends(get_current_user)):
     await _create_verification(user["id"], "phone", data.new_value, user["email"],
-                              f"დაადასტურეთ ტელეფონის ცვლილება: {data.new_value}")
+                               f"დაადასტურეთ ტელეფონის ცვლილება: {data.new_value}")
     return {"status": "დადასტურების კოდი გაიგზავნა თქვენს მეილზე"}
 
 @api_router.post("/account/confirm-change")
@@ -658,57 +710,10 @@ async def confirm_change(data: CodeConfirm, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
     if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
-    
-    field = v["field"]
-    new_value = v["new_value"]
-    
-    if field == "email":
-        await db.users.update_one({"id": user["id"]}, {"$set": {"email": new_value}})
-        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"email": new_value}})
-    elif field == "phone":
-        await db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_value}})
-        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_value}})
-        
-    await db.verifications.delete_many({"user_id": user["id"], "field": field})
-    return {"status": "ცვლილება წარმატებით დადასტურდა"}
+    await db.users.update_one({"id": user["id"]}, {"$set": {v["field"]: v["new_value"]}})
+    if v["field"] == "email":
+        await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
+    await db.verifications.delete_many({"user_id": user["id"], "code": data.code})
+    return {"status": "მონაცემი წარმატებით შეიცვალა"}
 
-# ---------------------------------------------------------------------------
-# Missing Endpoints Added (Support, Notifications, Chat unread count)
-# ---------------------------------------------------------------------------
-@api_router.get("/support/messages")
-async def get_support_messages(user: dict = Depends(get_current_user)):
-    messages = await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    return messages
-
-@api_router.post("/support/messages")
-async def send_support_message(data: SupportInput, user: dict = Depends(get_current_user)):
-    msg = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": user["name"],
-        "text": data.text,
-        "sender": "user",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.support_messages.insert_one(msg)
-    msg.pop("_id", None)
-    return msg
-
-@api_router.get("/notifications")
-async def get_notifications(user: dict = Depends(get_current_user)):
-    notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    return notifs
-
-@api_router.get("/chat/inbox/unread-count")
-async def get_unread_count(user: dict = Depends(get_current_user)):
-    count = await db.messages.count_documents({"recipient_id": user["id"], "read": False})
-    return {"count": count}
-
-# ---------------------------------------------------------------------------
-# Include Router & Run
-# ---------------------------------------------------------------------------
 app.include_router(api_router)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
