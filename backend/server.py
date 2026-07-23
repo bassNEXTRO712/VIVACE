@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # ---------------------------------------------------------------------------
-# CORS Configuration (Added)
+# CORS Configuration
 # ---------------------------------------------------------------------------
 origins = [
     "https://vivace-lime.vercel.app",
@@ -225,9 +225,7 @@ async def send_verification_email(recipient: str, code: str, purpose: str):
 def gen_code() -> str:
     return f"{random.randint(0, 999999):06d}"
 
-
 async def _purge_user_data(user_id: str, email: str, cids: list):
-    """Cascade-delete all rows that belong to a user / their companies to avoid orphans."""
     if cids:
         await db.messages.delete_many({"company_id": {"$in": cids}})
         await db.reviews.delete_many({"company_id": {"$in": cids}})
@@ -294,55 +292,6 @@ class ContactChangeRequest(BaseModel):
 
 class CodeConfirm(BaseModel):
     code: str
-
-class ChatMessageInput(BaseModel):
-    text: str = Field(..., min_length=1, max_length=2000)
-
-class ReviewInput(BaseModel):
-    rating: int = Field(..., ge=1, le=5)
-    text: str = Field(default="", max_length=2000)
-
-class CommentInput(BaseModel):
-    text: str = Field(default="", max_length=1000)
-    image_url: str = Field(default="")
-
-class AdminUserUpdate(BaseModel):
-    name: Optional[str] = None
-    password: Optional[str] = None
-
-class BlockInput(BaseModel):
-    blocked: bool
-
-class VerifyInput(BaseModel):
-    verified: bool
-
-class SupportInput(BaseModel):
-    text: str = Field(..., min_length=1, max_length=2000)
-
-class AdInput(BaseModel):
-    title: str = Field(default="", max_length=200)
-    link: str = Field(default="", max_length=500)
-    media_url: str
-    media_type: str = "image"
-
-def company_card(doc: dict) -> dict:
-    return {
-        "id": doc.get("id"),
-        "name": doc.get("name"),
-        "country": doc.get("country", ""),
-        "service_cities": doc.get("service_cities", []),
-        "address": doc.get("address", ""),
-        "description": doc.get("description", ""),
-        "logo_url": doc.get("logo_url", ""),
-        "cover_url": doc.get("cover_url", ""),
-        "verified": doc.get("verified", False),
-        "media_count": len(doc.get("media", [])),
-    }
-
-def public_company(doc: dict) -> dict:
-    doc.pop("_id", None)
-    doc.pop("owner_id", None)
-    return doc
 
 def user_response(user: dict, company_id=None) -> dict:
     return {
@@ -419,7 +368,7 @@ async def login(request: Request, data: LoginInput):
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="არასწორი მეილი ან პაროლი")
     if user.get("blocked") and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია. დაუკავშირდით ადმინისტრაციას.")
+        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია.")
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
     token = create_access_token(user["id"], email)
     return {"token": token, "user": user_response(user, company["id"] if company else None)}
@@ -507,70 +456,10 @@ async def get_company(company_id: str, request: Request):
         })
         await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
         company["views"] = company.get("views", 0) + 1
-    company = public_company(company)
+    company.pop("_id", None)
+    company.pop("owner_id", None)
     company.update(await rating_stats(company_id))
     return company
-
-@api_router.get("/company/{company_id}/reviews")
-async def get_reviews(company_id: str):
-    docs = await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    stats = await rating_stats(company_id)
-    return {"reviews": docs, **stats}
-
-@api_router.post("/company/{company_id}/reviews")
-async def add_review(company_id: str, data: ReviewInput, user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id}, {"_id": 0})
-    if not company:
-        raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
-    if company["owner_id"] == user["id"]:
-        raise HTTPException(status_code=400, detail="საკუთარ პროფილს ვერ შეაფასებთ")
-    now = datetime.now(timezone.utc).isoformat()
-    existing = await db.reviews.find_one({"company_id": company_id, "user_id": user["id"]})
-    if existing:
-        await db.reviews.update_one(
-            {"company_id": company_id, "user_id": user["id"]},
-            {"$set": {"rating": data.rating, "text": data.text, "created_at": now,
-                      "avatar_url": user.get("avatar_url", "")}},
-        )
-    else:
-        await db.reviews.insert_one({
-            "id": str(uuid.uuid4()), "company_id": company_id,
-            "user_id": user["id"], "user_name": user["name"],
-            "avatar_url": user.get("avatar_url", ""),
-            "rating": data.rating, "text": data.text, "created_at": now,
-        })
-    return await get_reviews(company_id)
-
-@api_router.get("/company/{company_id}/media/{media_id}/comments")
-async def get_photo_comments(company_id: str, media_id: str):
-    docs = await db.photo_comments.find(
-        {"company_id": company_id, "media_id": media_id}, {"_id": 0}
-    ).sort("created_at", 1).to_list(1000)
-    return docs
-
-@api_router.post("/company/{company_id}/media/{media_id}/comments")
-async def add_photo_comment(company_id: str, media_id: str, data: CommentInput, user: dict = Depends(get_current_user)):
-    if not data.text.strip() and not data.image_url:
-        raise HTTPException(status_code=400, detail="ცარიელი კომენტარი")
-    comment = {
-        "id": str(uuid.uuid4()), "company_id": company_id, "media_id": media_id,
-        "user_id": user["id"], "user_name": user["name"],
-        "avatar_url": user.get("avatar_url", ""),
-        "text": data.text, "image_url": data.image_url,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.photo_comments.insert_one(comment)
-    comment.pop("_id", None)
-    return comment
-
-@api_router.post("/upload")
-async def generic_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
-    is_video = ext in VIDEO_EXTS
-    allowed = VIDEO_EXTS if is_video else IMAGE_EXTS
-    max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
-    path, _, _ = await _upload_to_storage(user["id"], file, allowed, max_size)
-    return {"url": f"/api/files/{path}", "type": "video" if is_video else "image"}
 
 @api_router.put("/company/{company_id}")
 async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depends(get_current_user)):
@@ -585,9 +474,15 @@ async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depe
     updated = await db.companies.find_one({"id": company_id}, {"_id": 0})
     return updated
 
-# ---------------------------------------------------------------------------
-# Media / file endpoints
-# ---------------------------------------------------------------------------
+@api_router.post("/upload")
+async def generic_upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
+    is_video = ext in VIDEO_EXTS
+    allowed = VIDEO_EXTS if is_video else IMAGE_EXTS
+    max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
+    path, _, _ = await _upload_to_storage(user["id"], file, allowed, max_size)
+    return {"url": f"/api/files/{path}", "type": "video" if is_video else "image"}
+
 async def _upload_to_storage(user_id: str, file: UploadFile, allowed_exts, max_size):
     ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
     if ext not in allowed_exts:
@@ -599,63 +494,6 @@ async def _upload_to_storage(user_id: str, file: UploadFile, allowed_exts, max_s
     content_type = MIME_TYPES.get(ext, file.content_type or "application/octet-stream")
     result = put_object(path, data, content_type)
     return result["path"], content_type, ext
-
-@api_router.post("/company/{company_id}/logo")
-async def upload_logo(company_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id})
-    if not company or company["owner_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
-    path, _, _ = await _upload_to_storage(user["id"], file, IMAGE_EXTS, MAX_IMAGE_SIZE)
-    url = f"/api/files/{path}"
-    await db.companies.update_one({"id": company_id}, {"$set": {"logo_url": url}})
-    return {"url": url}
-
-@api_router.post("/company/{company_id}/cover")
-async def upload_cover(company_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id})
-    if not company or company["owner_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
-    path, _, _ = await _upload_to_storage(user["id"], file, IMAGE_EXTS, MAX_IMAGE_SIZE)
-    url = f"/api/files/{path}"
-    await db.companies.update_one({"id": company_id}, {"$set": {"cover_url": url}})
-    return {"url": url}
-
-@api_router.post("/company/{company_id}/media")
-async def upload_media(company_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id})
-    if not company or company["owner_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
-    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
-    is_video = ext in VIDEO_EXTS
-    allowed = VIDEO_EXTS if is_video else IMAGE_EXTS
-    max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
-    path, content_type, ext = await _upload_to_storage(user["id"], file, allowed, max_size)
-    item = {
-        "id": str(uuid.uuid4()),
-        "url": f"/api/files/{path}",
-        "storage_path": path,
-        "type": "video" if is_video else "image",
-        "content_type": content_type,
-        "original_filename": file.filename,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.companies.update_one({"id": company_id}, {"$push": {"media": item}})
-    return item
-
-@api_router.delete("/company/{company_id}/media/{media_id}")
-async def delete_media(company_id: str, media_id: str, user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id})
-    if not company or company["owner_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
-    await db.companies.update_one({"id": company_id}, {"$pull": {"media": {"id": media_id}}})
-    return {"status": "deleted"}
-
-@api_router.post("/account/avatar")
-async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    path, _, _ = await _upload_to_storage(user["id"], file, IMAGE_EXTS, MAX_IMAGE_SIZE)
-    url = f"/api/files/{path}"
-    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": url}})
-    return {"url": url}
 
 @api_router.get("/files/{path:path}")
 async def serve_file(path: str):
@@ -737,7 +575,7 @@ async def delete_account(user: dict = Depends(get_current_user)):
     return {"status": "ანგარიში წაშლილია"}
 
 # ---------------------------------------------------------------------------
-# Additional Missing Endpoints (Notifications & Filtered Companies)
+# Additional Endpoints (Notifications, Filtered Companies, Ads & Admin)
 # ---------------------------------------------------------------------------
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
@@ -751,6 +589,38 @@ async def get_filtered_companies(country: Optional[str] = None):
         query["country"] = country
     companies = await db.companies.find(query, {"_id": 0, "owner_id": 0}).sort("created_at", -1).to_list(100)
     return companies
+
+@api_router.get("/companies-countries")
+async def get_companies_countries():
+    countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
+    return countries
+
+@api_router.get("/ads")
+async def get_ads():
+    ads = await db.ads.find({}, {"_id": 0}).to_list(20)
+    return ads
+
+@api_router.get("/admin/stats")
+async def admin_stats(admin: dict = Depends(require_admin)):
+    companies = await db.companies.count_documents({})
+    users = await db.users.count_documents({})
+    active_ads = await db.ads.count_documents({})
+    return {"companies": companies, "users": users, "ads": active_ads}
+
+@api_router.get("/admin/companies")
+async def admin_get_companies(admin: dict = Depends(require_admin)):
+    companies = await db.companies.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return companies
+
+@api_router.get("/admin/users")
+async def admin_get_users(admin: dict = Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    return users
+
+@api_router.post("/admin/seen")
+async def admin_mark_seen(admin: dict = Depends(require_admin)):
+    await db.users.update_many({"seen_by_admin": False}, {"$set": {"seen_by_admin": True}})
+    return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
 # App Inclusion & Startup
