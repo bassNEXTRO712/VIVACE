@@ -455,6 +455,60 @@ async def stats():
     return {"companies": companies, "users": users, "countries": len(countries)}
 
 # ---------------------------------------------------------------------------
+# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries)
+# ---------------------------------------------------------------------------
+@api_router.get("/companies-countries")
+async def get_companies_countries():
+    countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
+    return countries if countries else ["საქართველო"]
+
+@api_router.get("/ads")
+async def get_ads():
+    ads = await db.ads.find({}, {"_id": 0}).to_list(50)
+    return ads if ads else []
+
+@api_router.get("/notifications")
+async def get_user_notifications(user: dict = Depends(get_current_user)):
+    notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return notifs if notifs else []
+
+@api_router.post("/admin/seen")
+async def admin_seen(user: dict = Depends(require_admin)):
+    await db.users.update_many({"seen_by_admin": False}, {"$set": {"seen_by_admin": True}})
+    return {"status": "ok"}
+
+@api_router.get("/admin/users")
+async def admin_get_users(user: dict = Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users if users else []
+
+@api_router.get("/admin/companies")
+async def admin_get_companies(user: dict = Depends(require_admin)):
+    companies = await db.companies.find({}, {"_id": 0}).to_list(1000)
+    return companies if companies else []
+
+@api_router.get("/admin/stats")
+async def admin_get_stats(user: dict = Depends(require_admin)):
+    companies_count = await db.companies.count_documents({})
+    users_count = await db.users.count_documents({})
+    return {"companies": companies_count, "users": users_count}
+
+@api_router.get("/admin/support/inbox")
+async def admin_support_inbox(user: dict = Depends(require_admin)):
+    support_msgs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return support_msgs if support_msgs else []
+
+@api_router.get("/admin/ads")
+async def admin_get_ads(user: dict = Depends(require_admin)):
+    ads = await db.ads.find({}, {"_id": 0}).to_list(100)
+    return ads if ads else []
+
+@api_router.get("/admin/notifications")
+async def admin_get_notifications(user: dict = Depends(require_admin)):
+    notifs = await db.notifications.find({"user_id": "admin"}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return notifs if notifs else []
+
+# ---------------------------------------------------------------------------
 # Company profile endpoints
 # ---------------------------------------------------------------------------
 @api_router.get("/company/me")
