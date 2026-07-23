@@ -22,7 +22,9 @@ export default function PhotoDialog({ companyId, media, onClose }) {
   useEffect(() => {
     if (!media) return;
     setComments([]); setText(""); setImage("");
-    api.get(`/company/${companyId}/media/${media.id}/comments`).then((r) => setComments(r.data)).catch(() => {});
+    api.get(`/company/${companyId}/media/${media.id}/comments`)
+      .then((r) => setComments(r.data || []))
+      .catch(() => {});
   }, [media, companyId]);
 
   const uploadImage = async (file) => {
@@ -32,7 +34,9 @@ export default function PhotoDialog({ companyId, media, onClose }) {
     setUploading(true);
     try {
       const { data } = await api.post("/upload", fd);
-      setImage(data.url);
+      if (data && data.url) {
+        setImage(data.url);
+      }
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -44,9 +48,16 @@ export default function PhotoDialog({ companyId, media, onClose }) {
     if (!text.trim() && !image) return;
     setSending(true);
     try {
-      const { data } = await api.post(`/company/${companyId}/media/${media.id}/comments`, { text: text.trim(), image_url: image });
-      setComments((c) => [...c, data]);
-      setText(""); setImage(""); setShowEmoji(false);
+      const { data } = await api.post(`/company/${companyId}/media/${media.id}/comments`, { 
+        text: text.trim(), 
+        image_url: image 
+      });
+      if (data) {
+        setComments((c) => [...c, data]);
+        setText(""); 
+        setImage(""); 
+        setShowEmoji(false);
+      }
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -72,7 +83,7 @@ export default function PhotoDialog({ companyId, media, onClose }) {
               {comments.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">ჯერ არ არის კომენტარი</p>
               ) : comments.map((c) => (
-                <div key={c.id} data-testid="photo-comment" className="flex gap-3">
+                <div key={c.id || Math.random()} data-testid="photo-comment" className="flex gap-3">
                   <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs font-semibold uppercase flex-shrink-0 overflow-hidden">
                     {c.avatar_url ? <img src={fileUrl(c.avatar_url)} alt="" className="w-full h-full object-cover" /> : (c.user_name || "?").charAt(0)}
                   </div>
