@@ -19,18 +19,20 @@ export default function ChatInbox() {
   const loadInbox = async () => {
     try {
       const { data } = await api.get("/chat/inbox");
-      setConvos(data);
+      setConvos(data || []);
+    } catch (_) {
     } finally {
       setLoading(false);
     }
   };
 
   const loadMessages = async (visitorId) => {
+    if (!visitorId) return;
     try {
       const { data } = await api.get(`/chat/inbox/${visitorId}/messages`);
-      setMessages(data);
+      setMessages(data || []);
       const ts = await api.get(`/chat/inbox/${visitorId}/typing`);
-      setPeerTyping(ts.data.typing);
+      setPeerTyping(ts.data?.typing || false);
     } catch (_) {}
   };
 
@@ -50,7 +52,7 @@ export default function ChatInbox() {
   }, []);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !active.visitor_id) return;
     loadMessages(active.visitor_id);
     const t = setInterval(() => loadMessages(active.visitor_id), 4000);
     return () => clearInterval(t);
@@ -61,12 +63,14 @@ export default function ChatInbox() {
   }, [messages]);
 
   const send = async () => {
-    if (!text.trim() || !active) return;
+    if (!text.trim() || !active || !active.visitor_id) return;
     setSending(true);
     try {
       const { data } = await api.post(`/chat/inbox/${active.visitor_id}/messages`, { text: text.trim() });
-      setMessages((m) => [...m, data]);
-      setText("");
+      if (data) {
+        setMessages((m) => [...m, data]);
+        setText("");
+      }
     } finally {
       setSending(false);
     }
@@ -93,18 +97,23 @@ export default function ChatInbox() {
         ) : (
           <div className="divide-y divide-border">
             {convos.map((c) => (
-              <button key={c.visitor_id} data-testid="inbox-conversation"
+              <button 
+                key={c.visitor_id} 
+                data-testid="inbox-conversation"
                 onClick={() => setActive(c)}
                 className={`w-full text-left px-4 py-3 hover:bg-secondary transition-colors flex items-center gap-2 ${
                   active?.visitor_id === c.visitor_id ? "bg-secondary" : ""
-                }`}>
+                }`}
+              >
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{c.visitor_name}</p>
+                  <p className="font-medium text-sm truncate">{c.visitor_name || "მომხმარებელი"}</p>
                   <p className="text-xs text-muted-foreground truncate">{c.last_text}</p>
                 </div>
                 {c.unread > 0 && (
-                  <span data-testid="conversation-unread-badge"
-                    className="min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center flex-shrink-0">
+                  <span 
+                    data-testid="conversation-unread-badge"
+                    className="min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center flex-shrink-0"
+                  >
                     {c.unread}
                   </span>
                 )}
@@ -128,33 +137,49 @@ export default function ChatInbox() {
               </button>
               <p className="font-medium text-sm">{active.visitor_name}</p>
             </div>
+            
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.map((m) => (
-                <div key={m.id} className={`flex flex-col ${m.sender === "company" ? "items-end" : "items-start"}`}>
-                  <div className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${
-                    m.sender === "company"
-                      ? "bg-primary text-primary-foreground rounded-br-none"
-                      : "bg-secondary text-foreground rounded-bl-none"
-                  }`}>
-                    {m.text}
+              {messages.map((m) => {
+                const isCompany = m.sender === "company";
+                return (
+                  <div key={m.id || Math.random()} className={`flex flex-col ${isCompany ? "items-end" : "items-start"}`}>
+                    <div className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${
+                      isCompany
+                        ? "bg-primary text-primary-foreground rounded-br-none"
+                        : "bg-secondary text-foreground rounded-bl-none"
+                    }`}>
+                      {m.text}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
                   </div>
-                  <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
-                </div>
-              ))}
+                );
+              })}
+              
               {peerTyping && (
                 <div className="flex justify-start">
-                  <div className="bg-secondary text-muted-foreground rounded-lg rounded-bl-none px-3 py-2 text-xs" data-testid="typing-indicator">წერს...</div>
+                  <div className="bg-secondary text-muted-foreground rounded-lg rounded-bl-none px-3 py-2 text-xs" data-testid="typing-indicator">
+                    წერს...
+                  </div>
                 </div>
               )}
               <div ref={endRef} />
             </div>
+
             <div className="p-3 border-t border-border flex gap-2">
-              <Input data-testid="inbox-message-input" value={text}
+              <Input 
+                data-testid="inbox-message-input" 
+                value={text}
                 onChange={(e) => onType(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="პასუხის დაწერა..." />
-              <Button data-testid="inbox-send-button" size="icon" onClick={send} disabled={sending}
-                className="bg-primary hover:bg-orange-600 transition-colors flex-shrink-0">
+                placeholder="პასუხის დაწერა..." 
+              />
+              <Button 
+                data-testid="inbox-send-button" 
+                size="icon" 
+                onClick={send} 
+                disabled={sending}
+                className="bg-primary hover:bg-orange-600 transition-colors flex-shrink-0"
+              >
                 {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </div>
