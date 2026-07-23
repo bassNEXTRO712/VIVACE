@@ -455,7 +455,7 @@ async def stats():
     return {"companies": companies, "users": users, "countries": len(countries)}
 
 # ---------------------------------------------------------------------------
-# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries, Chat, Support, Reviews)
+# Frontend Compatibility Endpoints
 # ---------------------------------------------------------------------------
 @api_router.get("/companies")
 async def get_companies_by_country(country: Optional[str] = None):
@@ -501,8 +501,14 @@ async def admin_get_stats(user: dict = Depends(require_admin)):
 
 @api_router.get("/admin/support/inbox")
 @api_router.get("/support/inbox")
-async def admin_support_inbox(user: dict = Depends(require_admin)):
+async def admin_support_inbox(user: dict = Depends(get_current_user)):
     support_msgs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return support_msgs if support_msgs else []
+
+@api_router.get("/support/inbox/{target_id}")
+@api_router.get("/admin/support/inbox/{target_id}")
+async def get_specific_support_inbox(target_id: str, user: dict = Depends(get_current_user)):
+    support_msgs = await db.support_messages.find({"$or": [{"user_id": target_id}, {"company_id": target_id}]}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return support_msgs if support_msgs else []
 
 @api_router.post("/support")
@@ -569,7 +575,6 @@ async def admin_get_notifications(user: dict = Depends(require_admin)):
     notifs = await db.notifications.find({"user_id": "admin"}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return notifs if notifs else []
 
-# Reviews Endpoints for company
 @api_router.get("/company/{company_id}/reviews")
 async def get_company_reviews(company_id: str):
     reviews = await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
@@ -826,7 +831,6 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     msg_doc.pop("_id", None)
     return msg_doc
 
-# Company Direct Chat Endpoints
 @api_router.get("/chat/{company_id}/messages")
 async def get_company_chat_messages(company_id: str, user: dict = Depends(get_current_user)):
     docs = await db.messages.find({
