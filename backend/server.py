@@ -575,7 +575,7 @@ async def delete_account(user: dict = Depends(get_current_user)):
     return {"status": "ანგარიში წაშლილია"}
 
 # ---------------------------------------------------------------------------
-# Additional Endpoints (Guaranteed Array Returns to prevent .length errors)
+# Additional Endpoints (Guaranteed Array Returns & Support/Admin Ads)
 # ---------------------------------------------------------------------------
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
@@ -621,6 +621,31 @@ async def admin_get_users(admin: dict = Depends(require_admin)):
 async def admin_mark_seen(admin: dict = Depends(require_admin)):
     await db.users.update_many({"seen_by_admin": False}, {"$set": {"seen_by_admin": True}})
     return {"status": "ok"}
+
+@api_router.get("/support/inbox")
+async def support_inbox(user: dict = Depends(get_current_user)):
+    messages = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return messages if messages is not None else []
+
+@api_router.get("/admin/ads")
+async def admin_get_ads(admin: dict = Depends(require_admin)):
+    ads = await db.ads.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return ads if ads is not None else []
+
+@api_router.post("/admin/ads")
+async def admin_create_ad(request: Request, admin: dict = Depends(require_admin)):
+    body = await request.json()
+    ad_id = str(uuid.uuid4())
+    ad_doc = {
+        "id": ad_id,
+        "title": body.get("title", ""),
+        "body": body.get("body", ""),
+        "media_url": body.get("media_url", ""),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.ads.insert_one(ad_doc)
+    ad_doc.pop("_id", None)
+    return ad_doc
 
 # ---------------------------------------------------------------------------
 # App Inclusion & Startup
