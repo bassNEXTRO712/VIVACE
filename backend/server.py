@@ -710,10 +710,49 @@ async def confirm_change(data: CodeConfirm, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
     if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
-    await db.users.update_one({"id": user["id"]}, {"$set": {v["field"]: v["new_value"]}})
-    if v["field"] == "email":
-        await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
-    await db.verifications.delete_many({"user_id": user["id"], "code": data.code})
-    return {"status": "მონაცემი წარმატებით შეიცვალა"}
+    
+    field = v["field"]
+    new_val = v["new_value"]
+    
+    if field == "email":
+        await db.users.update_one({"id": user["id"]}, {"$set": {"email": new_val}})
+        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"email": new_val}})
+    elif field == "phone":
+        await db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}})
+        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}})
+        
+    await db.verifications.delete_many({"user_id": user["id"], "field": field})
+    return {"status": "მონაცემები წარმატებით განახლდა"}
 
+@api_router.delete("/account")
+async def delete_account(user: dict = Depends(get_current_user)):
+    user_id = user["id"]
+    email = user.get("email")
+    companies = await db.companies.find({"owner_id": user_id}, {"id": 1}).to_list(100)
+    cids = [c["id"] for c in companies]
+    
+    await _purge_user_data(user_id, email, cids)
+    await db.companies.delete_many({"owner_id": user_id})
+    await db.users.delete_one({"id": user_id})
+    return {"status": "ანგარიში წაშლილია"}
+
+# ---------------------------------------------------------------------------
+# Additional Missing Endpoints (Notifications & Filtered Companies)
+# ---------------------------------------------------------------------------
+@api_router.get("/notifications")
+async def get_notifications(user: dict = Depends(get_current_user)):
+    notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return notifs
+
+@api_router.get("/companies")
+async def get_filtered_companies(country: Optional[str] = None):
+    query = {}
+    if country:
+        query["country"] = country
+    companies = await db.companies.find(query, {"_id": 0, "owner_id": 0}).sort("created_at", -1).to_list(100)
+    return companies
+
+# ---------------------------------------------------------------------------
+# App Inclusion & Startup
+# ---------------------------------------------------------------------------
 app.include_router(api_router)
