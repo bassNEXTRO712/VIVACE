@@ -455,7 +455,7 @@ async def stats():
     return {"companies": companies, "users": users, "countries": len(countries)}
 
 # ---------------------------------------------------------------------------
-# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries, Chat helpers)
+# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries, Chat, Support, Reviews)
 # ---------------------------------------------------------------------------
 @api_router.get("/companies")
 async def get_companies_by_country(country: Optional[str] = None):
@@ -505,6 +505,24 @@ async def admin_support_inbox(user: dict = Depends(require_admin)):
     support_msgs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return support_msgs if support_msgs else []
 
+@api_router.post("/support")
+async def post_support_message(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="ტექსტი ცარიელია")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "text": text,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.support_messages.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
 @api_router.get("/admin/ads")
 async def admin_get_ads(user: dict = Depends(require_admin)):
     ads = await db.ads.find({}, {"_id": 0}).to_list(100)
@@ -551,19 +569,55 @@ async def admin_get_notifications(user: dict = Depends(require_admin)):
     notifs = await db.notifications.find({"user_id": "admin"}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return notifs if notifs else []
 
+# Reviews Endpoints for company
+@api_router.get("/company/{company_id}/reviews")
+async def get_company_reviews(company_id: str):
+    reviews = await db.reviews.find({"company_id": company_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return reviews if reviews else []
+
+@api_router.post("/company/{company_id}/reviews")
+async def post_company_review(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    rating = int(body.get("rating", 5))
+    text = (body.get("text") or "").strip()
+    
+    review_doc = {
+        "id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "user_id": user["id"],
+        "user_name": user.get("name", "მომხმარებელი"),
+        "avatar_url": user.get("avatar_url", ""),
+        "rating": rating,
+        "text": text,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.reviews.insert_one(review_doc)
+    review_doc.pop("_id", None)
+    return review_doc
+
+@api_router.post("/account/avatar")
+async def update_account_avatar(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    avatar_url = body.get("avatar_url", "")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": avatar_url}})
+    return {"status": "ok", "avatar_url": avatar_url}
+
 @api_router.post("/chat/read")
-async def chat_mark_read(request: Request, user: dict = Depends(get_current_user)):
+@api_router.post("/chat/{company_id}/read")
+async def chat_mark_read(request: Request, user: dict = Depends(get_current_user), company_id: Optional[str] = None):
     body = await request.json()
     sender_id = body.get("sender_id")
+    query = {"recipient_id": user["id"], "read": False}
     if sender_id:
-        await db.messages.update_many(
-            {"sender_id": sender_id, "recipient_id": user["id"], "read": False},
-            {"$set": {"read": True}}
-        )
+        query["sender_id"] = sender_id
+    if company_id:
+        query["company_id"] = company_id
+    await db.messages.update_many(query, {"$set": {"read": True}})
     return {"status": "ok"}
 
 @api_router.post("/chat/typing")
-async def chat_typing_status(request: Request, user: dict = Depends(get_current_user)):
+@api_router.post("/chat/{company_id}/typing")
+async def chat_typing_status(request: Request, user: dict = Depends(get_current_user), company_id: Optional[str] = None):
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
