@@ -331,6 +331,15 @@ async def register(request: Request, data: RegisterInput):
         "password_hash": hash_password(data.password), "created_at": now,
     }
     await db.users.insert_one(user_doc)
+    
+    # შეტყობინება ადმინს ახალი რეგისტრაციის შესახებ
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": "admin", # ან გლობალური ადმინის აიდი
+        "text": f"ახალი მომხმარებელი დარეგისტრირდა: {data.name} ({email})",
+        "created_at": now
+    })
+
     company_id = None
     if role == "company":
         company_id = str(uuid.uuid4())
@@ -466,7 +475,7 @@ async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depe
     company = await db.companies.find_one({"id": company_id})
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
-    if company["owner_id"] != user["id"]:
+    if company["owner_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
     updates = {k: v for k, v in data.model_dump().items() if v is not None}
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -575,7 +584,7 @@ async def delete_account(user: dict = Depends(get_current_user)):
     return {"status": "ანგარიში წაშლილია"}
 
 # ---------------------------------------------------------------------------
-# Chat, Messages & Support Endpoints (Fixed 404 & Empty Array Issues)
+# Chat, Messages & Support Endpoints
 # ---------------------------------------------------------------------------
 @api_router.get("/chat/inbox")
 async def chat_inbox(user: dict = Depends(get_current_user)):
@@ -612,9 +621,7 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     msg_doc.pop("_id", None)
     return msg_doc
 
-# ---------------------------------------------------------------------------
-# Company Direct Chat Endpoints (Matching Frontend Routes)
-# ---------------------------------------------------------------------------
+# Company Direct Chat Endpoints
 @api_router.get("/chat/{company_id}/messages")
 async def get_company_chat_messages(company_id: str, user: dict = Depends(get_current_user)):
     docs = await db.messages.find({
@@ -644,9 +651,14 @@ async def send_company_chat_message(company_id: str, request: Request, user: dic
 async def company_chat_typing(company_id: str, request: Request, user: dict = Depends(get_current_user)):
     return {"status": "ok"}
 
+# Support Endpoints
 @api_router.get("/support/messages")
 async def get_support_messages(user: dict = Depends(get_current_user)):
-    docs = await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    # თუ ადმინია, აბრუნებს ყველას ან თავისას
+    if user.get("role") == "admin":
+        docs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    else:
+        docs = await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
     return docs if docs is not None else []
 
 @api_router.post("/support/messages")
@@ -655,6 +667,7 @@ async def send_support_message(request: Request, user: dict = Depends(get_curren
     sup_doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
+        "user_name": user.get("name", ""),
         "text": body.get("text", ""),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
@@ -662,9 +675,17 @@ async def send_support_message(request: Request, user: dict = Depends(get_curren
     sup_doc.pop("_id", None)
     return sup_doc
 
+@api_router.get("/support/inbox")
+async def support_inbox(user: dict = Depends(get_current_user)):
+    messages = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return messages if messages is not None else []
+
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
-    notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    query = {"user_id": user["id"]}
+    if user.get("role") == "admin":
+        query = {"$or": [{"user_id": user["id"]}, {"user_id": "admin"}]}
+    notifs = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).to_list(50)
     return notifs if notifs is not None else []
 
 @api_router.get("/companies")
@@ -685,12 +706,17 @@ async def get_ads():
     ads = await db.ads.find({}, {"_id": 0}).to_list(20)
     return ads if ads is not None else []
 
+# ---------------------------------------------------------------------------
+# Admin Management Endpoints (Fixed 404 for User Actions)
+# ---------------------------------------------------------------------------
 @api_router.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(require_admin)):
     companies = await db.companies.count_documents({})
     users = await db.users.count_documents({})
     active_ads = await db.ads.count_documents({})
-    return {"companies": companies, "users": users, "ads": active_ads}
+    reviews = await db.reviews.count_documents({})
+    messages = await db.messages.count_documents({})
+    return {"companies": companies, "users": users, "ads": active_ads, "reviews": reviews, "messages": messages}
 
 @api_router.get("/admin/companies")
 async def admin_get_companies(admin: dict = Depends(require_admin)):
@@ -702,15 +728,33 @@ async def admin_get_users(admin: dict = Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
     return users if users is not None else []
 
+@api_router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, request: Request, admin: dict = Depends(require_admin)):
+    body = await request.json()
+    updates = {k: v for k, v in body.items() if k in ["name", "email", "phone", "role", "blocked"]}
+    if updates:
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+        if "name" in updates:
+            await db.companies.update_one({"owner_id": user_id}, {"$set": {"name": updates["name"]}})
+    updated_user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated_user
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="მომხმარებელი ვერ მოიძებნა")
+    companies = await db.companies.find({"owner_id": user_id}, {"id": 1}).to_list(100)
+    cids = [c["id"] for c in companies]
+    await _purge_user_data(user_id, user.get("email"), cids)
+    await db.companies.delete_many({"owner_id": user_id})
+    await db.users.delete_one({"id": user_id})
+    return {"status": "მომხმარებელი წაშლილია"}
+
 @api_router.post("/admin/seen")
 async def admin_mark_seen(admin: dict = Depends(require_admin)):
     await db.users.update_many({"seen_by_admin": False}, {"$set": {"seen_by_admin": True}})
     return {"status": "ok"}
-
-@api_router.get("/support/inbox")
-async def support_inbox(user: dict = Depends(get_current_user)):
-    messages = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return messages if messages is not None else []
 
 @api_router.get("/admin/ads")
 async def admin_get_ads(admin: dict = Depends(require_admin)):
@@ -731,6 +775,11 @@ async def admin_create_ad(request: Request, admin: dict = Depends(require_admin)
     await db.ads.insert_one(ad_doc)
     ad_doc.pop("_id", None)
     return ad_doc
+
+@api_router.delete("/admin/ads/{ad_id}")
+async def admin_delete_ad(ad_id: str, admin: dict = Depends(require_admin)):
+    await db.ads.delete_one({"id": ad_id})
+    return {"status": "რეკლამა წაშლილია"}
 
 # ---------------------------------------------------------------------------
 # App Inclusion & Startup
