@@ -12,7 +12,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import AdminSupport from "@/components/AdminSupport";
 import AdminAds from "@/components/AdminAds";
 
@@ -64,12 +64,22 @@ export default function AdminPanel() {
 
   const delUser = async (id) => { try { await api.delete(`/admin/users/${id}`); toast.success("წაიშალა"); load(); } catch (e) { toast.error(apiError(e)); } };
   const delCompany = async (id) => { try { await api.delete(`/admin/companies/${id}`); toast.success("წაიშალა"); load(); } catch (e) { toast.error(apiError(e)); } };
-  const toggleBlock = async (u) => { try { await api.post(`/admin/users/${u.id}/block`, { blocked: !u.blocked }); toast.success(u.blocked ? "განიბლოკა" : "დაიბლოკა"); load(); } catch (e) { toast.error(apiError(e)); } };
-  const toggleVerify = async (c) => { try { await api.post(`/admin/companies/${c.id}/verify`, { verified: !c.verified }); load(); } catch (e) { toast.error(apiError(e)); } };
+  const toggleBlock = async (u) => { try { await api.put(`/admin/users/${u.id}`, { blocked: !u.blocked }); toast.success(u.blocked ? "განიბლოკა" : "დაიბლოკა"); load(); } catch (e) { toast.error(apiError(e)); } };
+  const toggleVerify = async (c) => { try { await api.post(`/admin/companies/${c.id}/verify`); toast.success(c.verified ? "ვერიფიკაცია მოხსნა" : "დავერიფიცირდა"); load(); } catch (e) { toast.error(apiError(e)); } };
   const openEdit = (u) => { setEdit(u); setEditName(u.name); setEditPass(""); };
   const saveEdit = async () => {
     try {
-      await api.put(`/admin/users/${edit.id}`, { name: editName, password: editPass || undefined });
+      // backend UserAdminUpdate: { blocked?, role? } — სახელი /auth/profile-ით იცვლება
+      const updates = {};
+      if (editPass === "block") updates.blocked = true;
+      if (editPass === "unblock") updates.blocked = false;
+      if (Object.keys(updates).length) {
+        await api.put(`/admin/users/${edit.id}`, updates);
+      }
+      // სახელი — ცალკე endpoint-ით
+      if (editName !== edit.name) {
+        await api.put("/auth/profile", { name: editName });
+      }
       toast.success("განახლდა"); setEdit(null); load();
     } catch (e) { toast.error(apiError(e)); }
   };
@@ -160,12 +170,29 @@ export default function AdminPanel() {
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent className="bg-card border-border">
-          <DialogHeader><DialogTitle>მომხმარებლის რედაქტირება</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>მომხმარებლის რედაქტირება</DialogTitle>
+            <DialogDescription className="text-muted-foreground text-sm">
+              {edit?.email}
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2"><Label>სახელი</Label>
-              <Input data-testid="admin-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} /></div>
-            <div className="space-y-2"><Label>ახალი პაროლი (არასავალდებულო)</Label>
-              <Input data-testid="admin-edit-password" type="text" value={editPass} onChange={(e) => setEditPass(e.target.value)} placeholder="დატოვე ცარიელი უცვლელად" /></div>
+            <div className="space-y-2">
+              <Label>სახელი</Label>
+              <Input data-testid="admin-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>სტატუსი</Label>
+              <select
+                className="w-full border border-border bg-background rounded-md px-3 py-2 text-sm"
+                value={editPass}
+                onChange={(e) => setEditPass(e.target.value)}
+              >
+                <option value="">უცვლელი</option>
+                <option value="block">დაბლოკვა</option>
+                <option value="unblock">განბლოკვა</option>
+              </select>
+            </div>
             <Button data-testid="admin-edit-save" onClick={saveEdit} className="bg-primary hover:bg-orange-600 w-full">შენახვა</Button>
           </div>
         </DialogContent>

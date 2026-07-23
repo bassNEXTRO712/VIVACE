@@ -310,6 +310,7 @@ class UserUpdate(BaseModel):
 class UserAdminUpdate(BaseModel):
     blocked: Optional[bool] = None
     role:    Optional[str]  = None
+    name:    Optional[str]  = None
 
 class CompanyUpdate(BaseModel):
     name:           Optional[str]       = None
