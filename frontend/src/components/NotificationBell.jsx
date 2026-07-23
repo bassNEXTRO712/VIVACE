@@ -10,7 +10,7 @@ export default function NotificationBell() {
   const boxRef = useRef();
 
   useEffect(() => {
-    const load = () => api.get("/notifications").then((r) => setData(r.data)).catch(() => {});
+    const load = () => api.get("/notifications").then((r) => setData(r.data || { count: 0, items: [] })).catch(() => {});
     load();
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
@@ -37,20 +37,20 @@ export default function NotificationBell() {
       {open && (
         <div className="absolute right-0 mt-2 w-80 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden z-50">
           <div className="px-4 py-3 border-b border-border font-medium text-sm">შეტყობინებები</div>
-          {data.items.length === 0 ? (
+          {!data.items || data.items.length === 0 ? (
             <p className="text-sm text-muted-foreground p-6 text-center">ახალი შეტყობინება არ არის</p>
           ) : (
             <div className="max-h-80 overflow-y-auto divide-y divide-border">
               {data.items.map((it, i) => (
                 <button key={i} data-testid="notification-item"
-                  onClick={() => { setOpen(false); navigate(it.link); }}
+                  onClick={() => { setOpen(false); if (it.link) navigate(it.link); }}
                   className="w-full text-left px-4 py-3 hover:bg-secondary transition-colors flex items-start gap-2">
                   <span className="mt-1 w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{it.title}</p>
                     <p className="text-xs text-muted-foreground truncate">{it.subtitle}</p>
                   </div>
-                  <span className="text-xs text-red-500 font-semibold">{it.count}</span>
+                  {it.count > 0 && <span className="text-xs text-red-500 font-semibold">{it.count}</span>}
                 </button>
               ))}
             </div>
