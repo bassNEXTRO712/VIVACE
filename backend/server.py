@@ -457,6 +457,12 @@ async def stats():
 # ---------------------------------------------------------------------------
 # Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries)
 # ---------------------------------------------------------------------------
+@api_router.get("/companies")
+async def get_companies_by_country(country: Optional[str] = None):
+    query = {"country": country} if country else {}
+    companies = await db.companies.find(query, {"_id": 0}).to_list(100)
+    return companies if companies else []
+
 @api_router.get("/companies-countries")
 async def get_companies_countries():
     countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
@@ -502,6 +508,32 @@ async def admin_support_inbox(user: dict = Depends(require_admin)):
 async def admin_get_ads(user: dict = Depends(require_admin)):
     ads = await db.ads.find({}, {"_id": 0}).to_list(100)
     return ads if ads else []
+
+@api_router.post("/admin/ads")
+async def admin_create_ad(request: Request, user: dict = Depends(require_admin)):
+    body = await request.json()
+    ad_doc = {
+        "id": str(uuid.uuid4()),
+        "title": body.get("title", ""),
+        "image_url": body.get("image_url", ""),
+        "link": body.get("link", ""),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.ads.insert_one(ad_doc)
+    ad_doc.pop("_id", None)
+    return ad_doc
+
+@api_router.delete("/admin/ads/{ad_id}")
+async def admin_delete_ad(ad_id: str, user: dict = Depends(require_admin)):
+    await db.ads.delete_one({"id": ad_id})
+    return {"status": "ok"}
+
+@api_router.delete("/admin/{item_id}")
+async def admin_delete_generic(item_id: str, user: dict = Depends(require_admin)):
+    await db.users.delete_one({"id": item_id})
+    await db.companies.delete_one({"id": item_id})
+    await db.support_messages.delete_one({"id": item_id})
+    return {"status": "ok"}
 
 @api_router.get("/admin/notifications")
 async def admin_get_notifications(user: dict = Depends(require_admin)):
