@@ -685,7 +685,6 @@ async def send_support_message(request: Request, user: dict = Depends(get_curren
 
 @api_router.get("/support/inbox")
 async def support_inbox(user: dict = Depends(get_current_user)):
-    # აბრუნებს უნიკალურ მომხმარებლებს/დიალოგებს მარცხენა სიისთვის, რომ თითოეულმა მომხმარებელმა მხოლოდ ერთხელ დაიკავოს ადგილი
     pipeline = [
         {"$sort": {"created_at": -1}},
         {"$group": {
@@ -703,6 +702,9 @@ async def support_inbox(user: dict = Depends(get_current_user)):
 
 @api_router.get("/support/inbox/{item_id}")
 async def support_inbox_item(item_id: str, user: dict = Depends(get_current_user)):
+    if not item_id or item_id == "undefined":
+        return []
+        
     now_str = datetime.now(timezone.utc).isoformat()
     await db.support_messages.update_many(
         {"$or": [{"id": item_id}, {"user_id": item_id}], "read": False},
@@ -717,6 +719,9 @@ async def support_inbox_item(item_id: str, user: dict = Depends(get_current_user
 
 @api_router.post("/support/inbox/{item_id}")
 async def reply_support_inbox_item(item_id: str, request: Request, user: dict = Depends(get_current_user)):
+    if not item_id or item_id == "undefined":
+        raise HTTPException(status_code=400, detail="მომხმარებლის ID არ არის მითითებული")
+        
     body = await request.json()
     target_user_id = item_id
     parent_msg = await db.support_messages.find_one({"id": item_id})
