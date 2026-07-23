@@ -612,6 +612,38 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     msg_doc.pop("_id", None)
     return msg_doc
 
+# ---------------------------------------------------------------------------
+# Company Direct Chat Endpoints (Matching Frontend Routes)
+# ---------------------------------------------------------------------------
+@api_router.get("/chat/{company_id}/messages")
+async def get_company_chat_messages(company_id: str, user: dict = Depends(get_current_user)):
+    docs = await db.messages.find({
+        "$or": [
+            {"sender_id": user["id"], "company_id": company_id},
+            {"recipient_id": user["id"], "company_id": company_id}
+        ]
+    }, {"_id": 0}).sort("created_at", 1).to_list(200)
+    return docs if docs is not None else []
+
+@api_router.post("/chat/{company_id}/messages")
+async def send_company_chat_message(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    msg_doc = {
+        "id": str(uuid.uuid4()),
+        "sender_id": user["id"],
+        "company_id": company_id,
+        "text": body.get("text", ""),
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.messages.insert_one(msg_doc)
+    msg_doc.pop("_id", None)
+    return msg_doc
+
+@api_router.post("/chat/{company_id}/typing")
+async def company_chat_typing(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    return {"status": "ok"}
+
 @api_router.get("/support/messages")
 async def get_support_messages(user: dict = Depends(get_current_user)):
     docs = await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
