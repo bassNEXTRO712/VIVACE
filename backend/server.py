@@ -575,12 +575,12 @@ async def delete_account(user: dict = Depends(get_current_user)):
     return {"status": "ანგარიში წაშლილია"}
 
 # ---------------------------------------------------------------------------
-# Additional Endpoints (Notifications, Filtered Companies, Ads & Admin)
+# Additional Endpoints (Guaranteed Array Returns to prevent .length errors)
 # ---------------------------------------------------------------------------
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
     notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    return notifs
+    return notifs if notifs is not None else []
 
 @api_router.get("/companies")
 async def get_filtered_companies(country: Optional[str] = None):
@@ -588,17 +588,17 @@ async def get_filtered_companies(country: Optional[str] = None):
     if country:
         query["country"] = country
     companies = await db.companies.find(query, {"_id": 0, "owner_id": 0}).sort("created_at", -1).to_list(100)
-    return companies
+    return companies if companies is not None else []
 
 @api_router.get("/companies-countries")
 async def get_companies_countries():
     countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
-    return countries
+    return countries if countries is not None else []
 
 @api_router.get("/ads")
 async def get_ads():
     ads = await db.ads.find({}, {"_id": 0}).to_list(20)
-    return ads
+    return ads if ads is not None else []
 
 @api_router.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(require_admin)):
@@ -610,12 +610,12 @@ async def admin_stats(admin: dict = Depends(require_admin)):
 @api_router.get("/admin/companies")
 async def admin_get_companies(admin: dict = Depends(require_admin)):
     companies = await db.companies.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return companies
+    return companies if companies is not None else []
 
 @api_router.get("/admin/users")
 async def admin_get_users(admin: dict = Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
-    return users
+    return users if users is not None else []
 
 @api_router.post("/admin/seen")
 async def admin_mark_seen(admin: dict = Depends(require_admin)):
