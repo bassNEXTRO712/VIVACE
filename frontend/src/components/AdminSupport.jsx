@@ -21,14 +21,15 @@ export default function AdminSupport() {
   };
 
   useEffect(() => { loadInbox(); const t = setInterval(loadInbox, 6000); return () => clearInterval(t); }, []);
-  useEffect(() => { if (!active) return; loadMsgs(active.user_id); const t = setInterval(() => loadMsgs(active.user_id), 4000); return () => clearInterval(t); }, [active]);
+  useEffect(() => { if (!active) return; loadMsgs(active.id || active.user_id); const t = setInterval(() => loadMsgs(active.id || active.user_id), 4000); return () => clearInterval(t); }, [active]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const send = async () => {
     if (!text.trim() || !active) return;
     setSending(true);
+    const targetId = active.id || active.user_id;
     try {
-      const { data } = await api.post(`/support/inbox/${active.user_id}`, { text: text.trim() });
+      const { data } = await api.post(`/support/inbox/${targetId}`, { text: text.trim() });
       setMessages((m) => [...m, data]); setText("");
     } finally { setSending(false); }
   };
@@ -39,16 +40,19 @@ export default function AdminSupport() {
         <div className="px-4 py-3 border-b border-border font-medium flex items-center gap-2"><Headset className="w-4 h-4 text-primary" /> მიმართვები</div>
         {convos.length === 0 ? <p className="text-sm text-muted-foreground p-6 text-center">ცარიელია</p> : (
           <div className="divide-y divide-border">
-            {convos.map((c) => (
-              <button key={c.user_id} data-testid="support-inbox-item" onClick={() => setActive(c)}
-                className={`w-full text-left px-4 py-3 hover:bg-secondary transition-colors flex items-center gap-2 ${active?.user_id === c.user_id ? "bg-secondary" : ""}`}>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{c.user_name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{c.last_text}</p>
-                </div>
-                {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-semibold flex items-center justify-center">{c.unread}</span>}
-              </button>
-            ))}
+            {convos.map((c) => {
+              const cid = c.id || c.user_id;
+              return (
+                <button key={cid} data-testid="support-inbox-item" onClick={() => setActive(c)}
+                  className={`w-full text-left px-4 py-3 hover:bg-secondary transition-colors flex items-center gap-2 ${(active?.id === cid || active?.user_id === cid) ? "bg-secondary" : ""}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm truncate">{c.user_name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{c.text}</p>
+                  </div>
+                  {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-semibold flex items-center justify-center">{c.unread}</span>}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -60,12 +64,15 @@ export default function AdminSupport() {
               <p className="font-medium text-sm">{active.user_name}</p>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.map((m) => (
-                <div key={m.id} className={`flex flex-col ${m.sender === "admin" ? "items-end" : "items-start"}`}>
-                  <div className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${m.sender === "admin" ? "bg-primary text-primary-foreground rounded-br-none" : "bg-secondary rounded-bl-none"}`}>{m.text}</div>
-                  <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
-                </div>
-              ))}
+              {messages.map((m) => {
+                const isAdminMsg = m.sender_id !== (active.id || active.user_id);
+                return (
+                  <div key={m.id} className={`flex flex-col ${isAdminMsg ? "items-end" : "items-start"}`}>
+                    <div className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${isAdminMsg ? "bg-primary text-primary-foreground rounded-br-none" : "bg-secondary rounded-bl-none"}`}>{m.text}</div>
+                    <span className="text-[10px] text-muted-foreground mt-1 px-1">{formatTime(m.created_at)}</span>
+                  </div>
+                );
+              })}
               <div ref={endRef} />
             </div>
             <div className="p-3 border-t border-border flex gap-2">
