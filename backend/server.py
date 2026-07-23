@@ -685,6 +685,16 @@ async def support_inbox(user: dict = Depends(get_current_user)):
     messages = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return messages if messages is not None else []
 
+@api_router.get("/support/inbox/{item_id}")
+async def support_inbox_item(item_id: str, user: dict = Depends(get_current_user)):
+    # მხარდაჭერა დინამიური ID-ს მქონე მოთხოვნისთვის
+    doc = await db.support_messages.find_one({"id": item_id}, {"_id": 0})
+    if not doc:
+        # თუ ID-ით ვერ იპოვა, ვეძებთ მომხმარებლის აიდით
+        docs = await db.support_messages.find({"user_id": item_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+        return docs if docs else []
+    return [doc]
+
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
     query = {"user_id": user["id"]}
@@ -712,7 +722,7 @@ async def get_ads():
     return ads if ads is not None else []
 
 # ---------------------------------------------------------------------------
-# Admin Management Endpoints (Fixed 404 for Company & User Actions)
+# Admin Management Endpoints
 # ---------------------------------------------------------------------------
 @api_router.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(require_admin)):
