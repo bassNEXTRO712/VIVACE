@@ -16,12 +16,23 @@ export default function UserProfile() {
 
   const uploadAvatar = async (file) => {
     if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
     setUploading(true);
     try {
-      const { data } = await api.post("/account/avatar", fd);
-      setUser((u) => ({ ...u, avatar_url: data.url }));
+      // 1. ჯერ ფაილი ავტვირთოთ /upload-ში
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data: uploadData } = await api.post("/upload", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      if (!uploadData?.url) throw new Error("upload failed");
+
+      // 2. შემდეგ url-ი JSON-ით /account/avatar-ში
+      const { data } = await api.post(
+        "/account/avatar",
+        { avatar_url: uploadData.url },
+        { headers: { "Content-Type": "application/json" } }
+      );
+      setUser((u) => ({ ...u, avatar_url: data.avatar_url || uploadData.url }));
       toast.success("ფოტო განახლდა");
     } catch (err) {
       toast.error(apiError(err));
