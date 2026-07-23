@@ -116,14 +116,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-origins = [
-    "https://vivace-lime.vercel.app",
-    "https://vivace-gh9w.onrender.com",
-    "http://localhost:3000",
-    "http://localhost:5173",
-]
+import re as _re
 
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+def _is_allowed_origin(origin: str) -> bool:
+    allowed = [
+        "https://vivace-lime.vercel.app",
+        "https://vivace-gh9w.onrender.com",
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+    if origin in allowed:
+        return True
+    # ყველა Vercel preview subdomain
+    if _re.match(r"https://vivace(-[a-z0-9]+)*\.vercel\.app$", origin):
+        return True
+    return False
+
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        origin = request.headers.get("origin", "")
+        if request.method == "OPTIONS":
+            response = Response(status_code=200)
+            if _is_allowed_origin(origin):
+                response.headers["Access-Control-Allow-Origin"]      = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Allow-Methods"]     = "*"
+                response.headers["Access-Control-Allow-Headers"]     = "*"
+            return response
+        response = await call_next(request)
+        if _is_allowed_origin(origin):
+            response.headers["Access-Control-Allow-Origin"]      = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+
+app.add_middleware(DynamicCORSMiddleware)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
