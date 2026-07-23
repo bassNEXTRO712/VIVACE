@@ -455,7 +455,7 @@ async def stats():
     return {"companies": companies, "users": users, "countries": len(countries)}
 
 # ---------------------------------------------------------------------------
-# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries)
+# Frontend Compatibility Endpoints (Admin, Ads, Notifications, Countries, Chat helpers)
 # ---------------------------------------------------------------------------
 @api_router.get("/companies")
 async def get_companies_by_country(country: Optional[str] = None):
@@ -500,6 +500,7 @@ async def admin_get_stats(user: dict = Depends(require_admin)):
     return {"companies": companies_count, "users": users_count}
 
 @api_router.get("/admin/support/inbox")
+@api_router.get("/support/inbox")
 async def admin_support_inbox(user: dict = Depends(require_admin)):
     support_msgs = await db.support_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return support_msgs if support_msgs else []
@@ -528,6 +529,16 @@ async def admin_delete_ad(ad_id: str, user: dict = Depends(require_admin)):
     await db.ads.delete_one({"id": ad_id})
     return {"status": "ok"}
 
+@api_router.delete("/admin/companies/{company_id}")
+async def admin_delete_specific_company(company_id: str, user: dict = Depends(require_admin)):
+    await db.companies.delete_one({"id": company_id})
+    return {"status": "ok"}
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_specific_user(user_id: str, user: dict = Depends(require_admin)):
+    await db.users.delete_one({"id": user_id})
+    return {"status": "ok"}
+
 @api_router.delete("/admin/{item_id}")
 async def admin_delete_generic(item_id: str, user: dict = Depends(require_admin)):
     await db.users.delete_one({"id": item_id})
@@ -539,6 +550,21 @@ async def admin_delete_generic(item_id: str, user: dict = Depends(require_admin)
 async def admin_get_notifications(user: dict = Depends(require_admin)):
     notifs = await db.notifications.find({"user_id": "admin"}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return notifs if notifs else []
+
+@api_router.post("/chat/read")
+async def chat_mark_read(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    sender_id = body.get("sender_id")
+    if sender_id:
+        await db.messages.update_many(
+            {"sender_id": sender_id, "recipient_id": user["id"], "read": False},
+            {"$set": {"read": True}}
+        )
+    return {"status": "ok"}
+
+@api_router.post("/chat/typing")
+async def chat_typing_status(request: Request, user: dict = Depends(get_current_user)):
+    return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
 # Company profile endpoints
