@@ -29,18 +29,16 @@ export default function Reviews({ companyId, isOwner, onStats }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  const load = async () => {
-    try {
-      const { data } = await api.get(`/company/${companyId}/reviews`);
-      setData(data);
-      onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const load = async () => {
+      try {
+        const { data } = await api.get(`/company/${companyId}/reviews`);
+        setData(data);
+        onStats && onStats({ rating_avg: data.rating_avg, review_count: data.review_count });
+      } finally {
+        setLoading(false);
+      }
+    };
     load();
   }, [companyId]);
 
