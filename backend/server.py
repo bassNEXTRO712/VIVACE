@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # ---------------------------------------------------------------------------
-# CORS Configuration (Added)
+# CORS Configuration
 # ---------------------------------------------------------------------------
 origins = [
     "https://vivace-lime.vercel.app",
