@@ -40,6 +40,7 @@ export default function Reviews({ companyId, isOwner, onStats }) {
       }
     };
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
   const submit = async () => {
