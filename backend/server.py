@@ -575,8 +575,61 @@ async def delete_account(user: dict = Depends(get_current_user)):
     return {"status": "ანგარიში წაშლილია"}
 
 # ---------------------------------------------------------------------------
-# Additional Endpoints (Guaranteed Array Returns & Support/Admin Ads)
+# Chat, Messages & Support Endpoints (Fixed 404 & Empty Array Issues)
 # ---------------------------------------------------------------------------
+@api_router.get("/chat/inbox")
+async def chat_inbox(user: dict = Depends(get_current_user)):
+    docs = await db.messages.find({"$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return docs if docs is not None else []
+
+@api_router.get("/chat/inbox/unread-count")
+async def chat_unread_count(user: dict = Depends(get_current_user)):
+    count = await db.messages.count_documents({"recipient_id": user["id"], "read": False})
+    return {"unread": count}
+
+@api_router.get("/chat/messages/{recipient_id}")
+async def get_chat_messages(recipient_id: str, user: dict = Depends(get_current_user)):
+    docs = await db.messages.find({
+        "$or": [
+            {"sender_id": user["id"], "recipient_id": recipient_id},
+            {"sender_id": recipient_id, "recipient_id": user["id"]}
+        ]
+    }, {"_id": 0}).sort("created_at", 1).to_list(200)
+    return docs if docs is not None else []
+
+@api_router.post("/chat/messages")
+async def send_chat_message(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    msg_doc = {
+        "id": str(uuid.uuid4()),
+        "sender_id": user["id"],
+        "recipient_id": body.get("recipient_id"),
+        "text": body.get("text", ""),
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.messages.insert_one(msg_doc)
+    msg_doc.pop("_id", None)
+    return msg_doc
+
+@api_router.get("/support/messages")
+async def get_support_messages(user: dict = Depends(get_current_user)):
+    docs = await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    return docs if docs is not None else []
+
+@api_router.post("/support/messages")
+async def send_support_message(request: Request, user: dict = Depends(get_current_user)):
+    body = await request.json()
+    sup_doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "text": body.get("text", ""),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.support_messages.insert_one(sup_doc)
+    sup_doc.pop("_id", None)
+    return sup_doc
+
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
     notifs = await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
