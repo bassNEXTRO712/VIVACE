@@ -38,7 +38,11 @@ export default function Reviews({ companyId, isOwner, onStats }) {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [companyId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load();
+  }, [companyId]);
 
   const submit = async () => {
     setSending(true);
