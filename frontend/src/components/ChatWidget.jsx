@@ -17,21 +17,29 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
   const [unread, setUnread] = useState(0);
   const prevCountRef = useRef(0);
   const lastTypingSent = useRef(0);
-  const endRef = useRef();
+  const endRef = useRef(null);
 
   const load = async () => {
-    if (!user) return;
+    if (!user || !companyId) return;
+
     try {
       const { data } = await api.get(`/chat/${companyId}/messages`);
       if (!Array.isArray(data)) return;
+
       setMessages(data);
+
       const newUnread = data.filter(
         (m) => m.sender_id !== user.id && m.read === false
       ).length;
-      const companyMsgCount = data.filter((m) => m.sender_id !== user.id).length;
+
+      const companyMsgCount = data.filter(
+        (m) => m.sender_id !== user.id
+      ).length;
+
       if (companyMsgCount > prevCountRef.current && prevCountRef.current > 0) {
         notify("VIVACE — პასუხი კომპანიისგან", `${companyName} გიპასუხათ.`);
       }
+
       prevCountRef.current = companyMsgCount;
       setUnread(newUnread);
     } catch (_) {}
@@ -39,7 +47,10 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
 
   const onType = (v) => {
     setText(v);
+
     const now = Date.now();
+    if (!companyId) return;
+
     if (now - lastTypingSent.current > 2500) {
       lastTypingSent.current = now;
       api.post(`/chat/${companyId}/typing`, {}).catch(() => {});
@@ -47,31 +58,41 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
   };
 
   useEffect(() => {
-    if (!user || isOwner) return;
+    if (!user || isOwner || !companyId) return;
+
     requestNotifyPermission();
     load();
+
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-    // eslint-disable-next-line
   }, [user, companyId, isOwner]);
 
   useEffect(() => {
-    if (!open || !user) return;
-    api.post(`/chat/${companyId}/read`, {}).then(() => setUnread(0)).catch(() => {});
-    // eslint-disable-next-line
-  }, [open]);
+    if (!open || !user || !companyId) return;
+
+    api
+      .post(`/chat/${companyId}/read`, {})
+      .then(() => setUnread(0))
+      .catch(() => {});
+  }, [open, user, companyId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const send = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || !companyId) return;
+
     setSending(true);
     try {
-      const { data } = await api.post(`/chat/${companyId}/messages`, { text: text.trim() });
-      setMessages((m) => [...m, data]);
-      setText("");
+      const { data } = await api.post(`/chat/${companyId}/messages`, {
+        text: text.trim(),
+      });
+
+      if (data) {
+        setMessages((m) => [...m, data]);
+        setText("");
+      }
     } catch (err) {
       apiError(err);
     } finally {
@@ -79,7 +100,7 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
     }
   };
 
-  if (isOwner) return null;
+  if (isOwner || !companyId) return null;
 
   return (
     <>
@@ -142,8 +163,10 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
                     დაწერეთ პირველი შეტყობინება
                   </p>
                 )}
+
                 {messages.map((m) => {
                   const isVisitor = m.sender_id === user.id;
+
                   return (
                     <div
                       key={m.id}
@@ -164,8 +187,10 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
                     </div>
                   );
                 })}
+
                 <div ref={endRef} />
               </div>
+
               <div className="p-3 border-t border-border flex gap-2">
                 <Input
                   data-testid="chat-message-input"
