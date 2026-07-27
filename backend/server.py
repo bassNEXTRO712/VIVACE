@@ -19,12 +19,11 @@ from typing import List, Optional
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from starlette.middleware.cors import CORSMiddleware
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.middleware.base import BaseHTTPMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 MONGO_URL     = os.environ['MONGO_URL']
@@ -47,9 +46,19 @@ MIME_TYPES = {
 }
 IMAGE_EXTS     = {"jpg", "jpeg", "png", "gif", "webp"}
 VIDEO_EXTS     = {"mp4", "webm", "mov"}
+MEDIA_EXTS     = IMAGE_EXTS | VIDEO_EXTS
 MAX_IMAGE_SIZE = 10  * 1024 * 1024
 MAX_VIDEO_SIZE = 100 * 1024 * 1024
 SAFE_PATH_RE   = re.compile(r"^[a-zA-Z0-9_\-./]+$")
+FILE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+ALLOWED_ORIGINS = frozenset({
+    "https://vivace-lime.vercel.app",
+    "https://vivace-gh9w.onrender.com",
+    "http://localhost:3000",
+    "http://localhost:5173",
+})
+VERCEL_PREVIEW_RE = re.compile(r"^https://vivace(-[a-z0-9]+)*\.vercel\.app$")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -57,8 +66,21 @@ logger = logging.getLogger(__name__)
 mongo_client: AsyncIOMotorClient = None  # type: ignore
 db = None
 
+http_client: Optional[httpx.AsyncClient] = None
 storage_key: Optional[str] = None
 _storage_lock = asyncio.Lock()
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def expires_iso(minutes: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
+def is_expired(value: str) -> bool:
+    return datetime.fromisoformat(value) < datetime.now(timezone.utc)
 
 
 async def init_storage() -> str:
@@ -68,9 +90,8 @@ async def init_storage() -> str:
     async with _storage_lock:
         if storage_key:
             return storage_key
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY})
-            resp.raise_for_status()
+        resp = await http_client.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+        resp.raise_for_status()
         storage_key = resp.json()["storage_key"]
         return storage_key
 
@@ -80,13 +101,13 @@ async def put_object(path: str, data: bytes, content_type: str) -> dict:
     last_err: Exception = RuntimeError("put_object: no attempts made")
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=120) as c:
-                resp = await c.put(
-                    f"{STORAGE_URL}/objects/{path}",
-                    headers={"X-Storage-Key": key, "Content-Type": content_type},
-                    content=data,
-                )
-                resp.raise_for_status()
+            resp = await http_client.put(
+                f"{STORAGE_URL}/objects/{path}",
+                headers={"X-Storage-Key": key, "Content-Type": content_type},
+                content=data,
+                timeout=120,
+            )
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             last_err = e
@@ -97,76 +118,95 @@ async def put_object(path: str, data: bytes, content_type: str) -> dict:
 
 async def get_object(path: str) -> tuple[bytes, str]:
     key = await init_storage()
-    async with httpx.AsyncClient(timeout=60) as c:
-        resp = await c.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key})
-        resp.raise_for_status()
+    resp = await http_client.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+INDEXES = [
+    ("users",            [("email", 1)],                        {"unique": True}),
+    ("users",            [("seen_by_admin", 1)],                {}),
+    ("companies",        [("id", 1)],                           {"unique": True}),
+    ("companies",        [("owner_id", 1)],                      {}),
+    ("companies",        [("country", 1)],                       {}),
+    ("company_views",    [("company_id", 1), ("viewer", 1)],     {"unique": True}),
+    ("reviews",          [("company_id", 1), ("created_at", -1)], {}),
+    ("reviews",          [("user_id", 1)],                        {}),
+    ("photo_comments",   [("company_id", 1), ("media_id", 1), ("created_at", 1)], {}),
+    ("photo_comments",   [("user_id", 1)],                        {}),
+    ("messages",         [("recipient_id", 1), ("read", 1)],      {}),
+    ("messages",         [("company_id", 1), ("created_at", 1)],  {}),
+    ("messages",         [("sender_id", 1), ("recipient_id", 1), ("created_at", 1)], {}),
+    ("notifications",    [("user_id", 1), ("created_at", -1)],    {}),
+    ("support_messages", [("user_id", 1), ("created_at", 1)],     {}),
+    ("verifications",    [("user_id", 1), ("field", 1)],          {}),
+    ("password_resets",  [("email", 1)],                          {}),
+]
+
+
+async def ensure_indexes():
+    results = await asyncio.gather(
+        *[db[coll].create_index(keys, **opts) for coll, keys, opts in INDEXES],
+        return_exceptions=True,
+    )
+    for (coll, keys, _), result in zip(INDEXES, results):
+        if isinstance(result, Exception):
+            logger.warning(f"index {coll}{keys} failed: {result}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mongo_client, db
-    mongo_client = AsyncIOMotorClient(MONGO_URL)
+    global mongo_client, db, http_client
+    mongo_client = AsyncIOMotorClient(MONGO_URL, maxPoolSize=50, serverSelectionTimeoutMS=10000)
     db = mongo_client[DB_NAME]
+    http_client = httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50, max_keepalive_connections=20))
     logger.info("MongoDB connected")
+    await ensure_indexes()
     yield
+    await http_client.aclose()
     mongo_client.close()
     logger.info("MongoDB disconnected")
 
 
 app = FastAPI(lifespan=lifespan)
 
-import re as _re
 
 def _is_allowed_origin(origin: str) -> bool:
-    allowed = [
-        "https://vivace-lime.vercel.app",
-        "https://vivace-gh9w.onrender.com",
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ]
-    if origin in allowed:
-        return True
-    # ყველა Vercel preview subdomain
-    if _re.match(r"https://vivace(-[a-z0-9]+)*\.vercel\.app$", origin):
-        return True
-    return False
+    return origin in ALLOWED_ORIGINS or bool(VERCEL_PREVIEW_RE.match(origin))
 
 
-class DynamicCORSMiddleware(BaseHTTPMiddleware):
+SECURITY_HEADERS = {
+    "X-Content-Type-Options":   "nosniff",
+    "X-Frame-Options":           "DENY",
+    "Referrer-Policy":           "strict-origin-when-cross-origin",
+    "X-XSS-Protection":          "1; mode=block",
+    "Permissions-Policy":        "geolocation=(), microphone=(), camera=()",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+}
+
+
+class CORSAndSecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        origin = request.headers.get("origin", "")
+        origin  = request.headers.get("origin", "")
+        allowed = _is_allowed_origin(origin) if origin else False
         if request.method == "OPTIONS":
             response = Response(status_code=200)
-            if _is_allowed_origin(origin):
+            if allowed:
                 response.headers["Access-Control-Allow-Origin"]      = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
                 response.headers["Access-Control-Allow-Methods"]     = "*"
                 response.headers["Access-Control-Allow-Headers"]     = "*"
-            return response
-        response = await call_next(request)
-        if _is_allowed_origin(origin):
-            response.headers["Access-Control-Allow-Origin"]      = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Max-Age"]           = "86400"
+        else:
+            response = await call_next(request)
+            if allowed:
+                response.headers["Access-Control-Allow-Origin"]      = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers.update(SECURITY_HEADERS)
         return response
 
 
-app.add_middleware(DynamicCORSMiddleware)
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"]   = "nosniff"
-        response.headers["X-Frame-Options"]           = "DENY"
-        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
-        response.headers["X-XSS-Protection"]          = "1; mode=block"
-        response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        return response
-
-
-app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CORSAndSecurityMiddleware)
 
 api_router = APIRouter(prefix="/api")
 security   = HTTPBearer(auto_error=False)
@@ -184,11 +224,18 @@ limiter = Limiter(key_func=client_ip, default_limits=[])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+async def hash_password_async(password: str) -> str:
+    return await asyncio.to_thread(hash_password, password)
+
+async def verify_password_async(plain: str, hashed: str) -> bool:
+    return await asyncio.to_thread(verify_password, plain, hashed)
 
 def create_access_token(user_id: str, email: str) -> str:
     payload = {
@@ -204,17 +251,16 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         raise HTTPException(status_code=401, detail="ავტორიზაცია საჭიროა")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
-        if not user:
-            raise HTTPException(status_code=401, detail="მომხმარებელი ვერ მოიძებნა")
-        if user.get("blocked") and user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია")
-        user.pop("password_hash", None)
-        return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="სესიის ვადა ამოიწურა")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="არასწორი ტოკენი")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="მომხმარებელი ვერ მოიძებნა")
+    if user.get("blocked") and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია")
+    return user
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "admin":
@@ -248,11 +294,13 @@ async def send_verification_email(recipient: str, code: str, purpose: str) -> bo
     </table>
     """
     try:
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
-                                headers={"X-Email-Key": EMAIL_KEY},
-                                json={"to": [recipient], "subject": "VIVACE — დადასტურების კოდი", "html": html, "from_name": EMAIL_FROM_NAME})
-            resp.raise_for_status()
+        resp = await http_client.post(
+            f"{EMAIL_BASE_URL}/api/v1/email/send",
+            headers={"X-Email-Key": EMAIL_KEY},
+            json={"to": [recipient], "subject": "VIVACE — დადასტურების კოდი", "html": html, "from_name": EMAIL_FROM_NAME},
+            timeout=30,
+        )
+        resp.raise_for_status()
         return True
     except httpx.HTTPStatusError as e:
         logger.error(f"Email send failed {e.response.status_code}: {e}")
@@ -264,20 +312,26 @@ def gen_code() -> str:
     return f"{random.randint(0, 999999):06d}"
 
 async def _purge_user_data(user_id: str, email: str, cids: list):
+    tasks = [
+        db.messages.delete_many({"visitor_id": user_id}),
+        db.messages.delete_many({"$or": [{"sender_id": user_id}, {"recipient_id": user_id}]}),
+        db.reviews.delete_many({"user_id": user_id}),
+        db.photo_comments.delete_many({"user_id": user_id}),
+        db.support_messages.delete_many({"user_id": user_id}),
+        db.verifications.delete_many({"user_id": user_id}),
+    ]
     if cids:
-        await db.messages.delete_many({"company_id": {"$in": cids}})
-        await db.reviews.delete_many({"company_id": {"$in": cids}})
-        await db.photo_comments.delete_many({"company_id": {"$in": cids}})
-        await db.support_messages.delete_many({"company_id": {"$in": cids}})
-        await db.typing.delete_many({"company_id": {"$in": cids}})
-        await db.company_views.delete_many({"company_id": {"$in": cids}})
-    await db.messages.delete_many({"visitor_id": user_id})
-    await db.reviews.delete_many({"user_id": user_id})
-    await db.photo_comments.delete_many({"user_id": user_id})
-    await db.support_messages.delete_many({"user_id": user_id})
-    await db.verifications.delete_many({"user_id": user_id})
+        tasks += [
+            db.messages.delete_many({"company_id": {"$in": cids}}),
+            db.reviews.delete_many({"company_id": {"$in": cids}}),
+            db.photo_comments.delete_many({"company_id": {"$in": cids}}),
+            db.support_messages.delete_many({"company_id": {"$in": cids}}),
+            db.typing.delete_many({"company_id": {"$in": cids}}),
+            db.company_views.delete_many({"company_id": {"$in": cids}}),
+        ]
     if email:
-        await db.password_resets.delete_many({"email": email})
+        tasks.append(db.password_resets.delete_many({"email": email}))
+    await asyncio.gather(*tasks)
 
 class RegisterInput(BaseModel):
     name:     str      = Field(..., min_length=1, max_length=120)
@@ -342,12 +396,16 @@ def user_response(user: dict, company_id=None) -> dict:
         "company_id": company_id,
     }
 
+async def _company_id_of(user_id: str) -> Optional[str]:
+    company = await db.companies.find_one({"owner_id": user_id}, {"_id": 0, "id": 1})
+    return company["id"] if company else None
+
 async def _send_email_code(user_id: str, email: str, field: str, purpose: str):
     code = gen_code()
     await db.verifications.delete_many({"user_id": user_id, "field": field})
     await db.verifications.insert_one({
         "user_id": user_id, "field": field, "new_value": email, "code": code,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        "expires_at": expires_iso(15),
     })
     await send_verification_email(email, code, purpose)
 
@@ -356,28 +414,31 @@ async def _send_email_code(user_id: str, email: str, field: str, purpose: str):
 async def register(request: Request, data: RegisterInput):
     email = data.email.lower()
     role  = "company" if data.role == "company" else "user"
-    if await db.users.find_one({"email": email}):
+    if await db.users.find_one({"email": email}, {"_id": 1}):
         raise HTTPException(status_code=400, detail="ეს მეილი უკვე რეგისტრირებულია")
     user_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
     user_doc = {
         "id": user_id, "email": email, "name": data.name,
         "phone": "", "role": role, "avatar_url": "", "email_verified": False,
         "blocked": False, "seen_by_admin": False,
-        "password_hash": hash_password(data.password), "created_at": now,
+        "password_hash": await hash_password_async(data.password), "created_at": now,
     }
-    await db.users.insert_one(user_doc)
-    await db.notifications.insert_one({"id": str(uuid.uuid4()), "user_id": "admin",
-        "text": f"ახალი მომხმარებელი: {data.name} ({email})", "created_at": now})
     company_id = None
+    inserts = [
+        db.users.insert_one(user_doc),
+        db.notifications.insert_one({"id": str(uuid.uuid4()), "user_id": "admin",
+            "text": f"ახალი მომხმარებელი: {data.name} ({email})", "created_at": now}),
+    ]
     if role == "company":
         company_id = str(uuid.uuid4())
-        await db.companies.insert_one({
+        inserts.append(db.companies.insert_one({
             "id": company_id, "owner_id": user_id, "name": data.name, "email": email,
             "phone": "", "address": "", "country": "", "service_cities": [],
             "description": "", "logo_url": "", "cover_url": "", "verified": False,
             "media": [], "views": 0, "created_at": now, "updated_at": now,
-        })
+        }))
+    await asyncio.gather(*inserts)
     await _send_email_code(user_id, email, "email_verify", "დაადასტურეთ თქვენი მეილი")
     return {"token": create_access_token(user_id, email), "user": user_response(user_doc, company_id)}
 
@@ -387,10 +448,12 @@ async def verify_email(request: Request, data: CodeConfirm, user: dict = Depends
     v = await db.verifications.find_one({"user_id": user["id"], "field": "email_verify", "code": data.code})
     if not v:
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
-    if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
+    if is_expired(v["expires_at"]):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
-    await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
-    await db.verifications.delete_many({"user_id": user["id"], "field": "email_verify"})
+    await asyncio.gather(
+        db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}}),
+        db.verifications.delete_many({"user_id": user["id"], "field": "email_verify"}),
+    )
     return {"status": "მეილი დადასტურდა"}
 
 @api_router.post("/auth/resend-verification")
@@ -404,28 +467,26 @@ async def resend_verification(request: Request, user: dict = Depends(get_current
 async def login(request: Request, data: LoginInput):
     email = data.email.lower()
     user  = await db.users.find_one({"email": email})
-    if not user or not verify_password(data.password, user["password_hash"]):
+    if not user or not await verify_password_async(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="არასწორი მეილი ან პაროლი")
     if user.get("blocked") and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="თქვენი ანგარიში დაბლოკილია.")
-    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    return {"token": create_access_token(user["id"], email), "user": user_response(user, company["id"] if company else None)}
+    return {"token": create_access_token(user["id"], email),
+            "user": user_response(user, await _company_id_of(user["id"]))}
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    return user_response(user, company["id"] if company else None)
+    return user_response(user, await _company_id_of(user["id"]))
 
 @api_router.post("/auth/forgot-password")
 @limiter.limit("5/hour")
 async def forgot_password(request: Request, data: ForgotPasswordInput):
     email = data.email.lower()
-    user  = await db.users.find_one({"email": email})
+    user  = await db.users.find_one({"email": email}, {"_id": 1})
     if user:
         code = gen_code()
         await db.password_resets.delete_many({"email": email})
-        await db.password_resets.insert_one({"email": email, "code": code,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()})
+        await db.password_resets.insert_one({"email": email, "code": code, "expires_at": expires_iso(15)})
         await send_verification_email(email, code, "პაროლის აღდგენის კოდი")
     return {"status": "თუ ეს მეილი რეგისტრირებულია, კოდი გაიგზავნა"}
 
@@ -436,10 +497,13 @@ async def reset_password(request: Request, data: ResetPasswordInput):
     rec   = await db.password_resets.find_one({"email": email, "code": data.code})
     if not rec:
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
-    if datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc):
+    if is_expired(rec["expires_at"]):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
-    await db.users.update_one({"email": email}, {"$set": {"password_hash": hash_password(data.new_password)}})
-    await db.password_resets.delete_many({"email": email})
+    password_hash = await hash_password_async(data.new_password)
+    await asyncio.gather(
+        db.users.update_one({"email": email}, {"$set": {"password_hash": password_hash}}),
+        db.password_resets.delete_many({"email": email}),
+    )
     return {"status": "პაროლი აღდგენილია"}
 
 @api_router.put("/auth/profile")
@@ -449,21 +513,26 @@ async def update_profile(data: UserUpdate, user: dict = Depends(get_current_user
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
         if "name" in updates:
             await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"name": updates["name"]}})
-    fresh   = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    return user_response(fresh, company["id"] if company else None)
+    fresh, company_id = await asyncio.gather(
+        db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0}),
+        _company_id_of(user["id"]),
+    )
+    return user_response(fresh, company_id)
 
 @api_router.get("/stats")
 async def stats():
-    companies = await db.companies.count_documents({})
-    users     = await db.users.count_documents({})
-    countries = await db.companies.distinct("country", {"country": {"$ne": ""}})
+    companies, users, countries = await asyncio.gather(
+        db.companies.count_documents({}),
+        db.users.count_documents({}),
+        db.companies.distinct("country", {"country": {"$ne": ""}}),
+    )
     return {"companies": companies, "users": users, "countries": len(countries)}
 
 @api_router.get("/companies")
-async def get_companies_by_country(country: Optional[str] = None):
+async def get_companies_by_country(country: Optional[str] = None, limit: int = 100, skip: int = 0):
+    limit = max(1, min(limit, 200))
     query = {"country": country} if country else {}
-    return await db.companies.find(query, {"_id": 0}).to_list(100) or []
+    return await db.companies.find(query, {"_id": 0, "owner_id": 0}).skip(max(skip, 0)).to_list(limit) or []
 
 @api_router.get("/companies-countries")
 async def get_companies_countries():
@@ -491,8 +560,10 @@ async def admin_update_user(user_id: str, data: UserAdminUpdate, user: dict = De
     updates = {k: v for k, v in data.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="განახლება ცარიელია")
-    await db.users.update_one({"id": user_id}, {"$set": updates})
-    updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    updated = await db.users.find_one_and_update(
+        {"id": user_id}, {"$set": updates},
+        projection={"_id": 0, "password_hash": 0}, return_document=True,
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="მომხმარებელი ვერ მოიძებნა")
     return updated
@@ -503,7 +574,7 @@ async def admin_get_companies(user: dict = Depends(require_admin)):
 
 @api_router.post("/admin/companies/{company_id}/verify")
 async def admin_verify_company(company_id: str, user: dict = Depends(require_admin)):
-    company = await db.companies.find_one({"id": company_id})
+    company = await db.companies.find_one({"id": company_id}, {"_id": 0, "verified": 1})
     if not company:
         raise HTTPException(status_code=404, detail="კომპანია ვერ მოიძებნა")
     new_status = not company.get("verified", False)
@@ -512,7 +583,11 @@ async def admin_verify_company(company_id: str, user: dict = Depends(require_adm
 
 @api_router.get("/admin/stats")
 async def admin_get_stats(user: dict = Depends(require_admin)):
-    return {"companies": await db.companies.count_documents({}), "users": await db.users.count_documents({})}
+    companies, users = await asyncio.gather(
+        db.companies.count_documents({}),
+        db.users.count_documents({}),
+    )
+    return {"companies": companies, "users": users}
 
 @api_router.get("/admin/notifications")
 async def admin_get_notifications(user: dict = Depends(require_admin)):
@@ -527,7 +602,7 @@ async def admin_create_ad(request: Request, user: dict = Depends(require_admin))
     body = await request.json()
     ad_doc = {"id": str(uuid.uuid4()), "title": body.get("title", ""),
               "image_url": body.get("image_url", ""), "link": body.get("link", ""),
-              "created_at": datetime.now(timezone.utc).isoformat()}
+              "created_at": now_iso()}
     await db.ads.insert_one(ad_doc)
     ad_doc.pop("_id", None)
     return ad_doc
@@ -549,9 +624,11 @@ async def admin_delete_specific_user(user_id: str, user: dict = Depends(require_
 
 @api_router.delete("/admin/{item_id}")
 async def admin_delete_generic(item_id: str, user: dict = Depends(require_admin)):
-    await db.users.delete_one({"id": item_id})
-    await db.companies.delete_one({"id": item_id})
-    await db.support_messages.delete_one({"id": item_id})
+    await asyncio.gather(
+        db.users.delete_one({"id": item_id}),
+        db.companies.delete_one({"id": item_id}),
+        db.support_messages.delete_one({"id": item_id}),
+    )
     return {"status": "ok"}
 
 @api_router.get("/admin/support/inbox")
@@ -570,8 +647,7 @@ async def admin_reply_to_user(user_id: str, request: Request, user: dict = Depen
     if not text:
         raise HTTPException(status_code=400, detail="ტექსტი ცარიელია")
     doc = {"id": str(uuid.uuid4()), "user_id": user_id, "user_name": "ადმინი",
-           "email": "", "text": text, "sender": "admin",
-           "created_at": datetime.now(timezone.utc).isoformat()}
+           "email": "", "text": text, "sender": "admin", "created_at": now_iso()}
     await db.support_messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -583,8 +659,7 @@ async def post_support_message(request: Request, user: dict = Depends(get_curren
     if not text:
         raise HTTPException(status_code=400, detail="ტექსტი ცარიელია")
     doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "user_name": user.get("name", ""),
-           "email": user.get("email", ""), "text": text, "sender": "user",
-           "created_at": datetime.now(timezone.utc).isoformat()}
+           "email": user.get("email", ""), "text": text, "sender": "user", "created_at": now_iso()}
     await db.support_messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -603,7 +678,7 @@ async def post_company_review(company_id: str, request: Request, user: dict = De
     doc  = {"id": str(uuid.uuid4()), "company_id": company_id, "user_id": user["id"],
             "user_name": user.get("name", "მომხმარებელი"), "avatar_url": user.get("avatar_url", ""),
             "rating": int(body.get("rating", 5)), "text": (body.get("text") or "").strip(),
-            "created_at": datetime.now(timezone.utc).isoformat()}
+            "created_at": now_iso()}
     await db.reviews.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -643,61 +718,63 @@ async def chat_typing(request: Request, user: dict = Depends(get_current_user)):
 async def chat_typing_company(company_id: str, user: dict = Depends(get_current_user)):
     return {"status": "ok"}
 
-# --- FIX: /company/me აღარ აგდებს 404-ს, თუ user-ს company profile არა აქვს.
-# ნაცვლად ამისა აბრუნებს 200 OK-ს და null-ს — ეს "ნორმალური" მდგომარეობაა
-# (მაგ. role="user" ტიპის მომხმარებლისთვის), არა error. ეს გამორიცხავს
-# ფრონტენდში დაფიქსირებულ "Uncaught (in promise) AxiosError 404" შეცდომას
-# ყოველგვარი ფრონტენდის ცვლილების გარეშე.
+# /company/me აბრუნებს 200 OK-ს და null-ს, თუ მომხმარებელს კომპანიის პროფილი არა აქვს.
 @api_router.get("/company/me")
 async def get_my_company(user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    return company  # None თუ არ არსებობს — status 200-ით
+    return await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
 
 async def rating_stats(company_id: str) -> dict:
-    docs  = await db.reviews.find({"company_id": company_id}, {"_id": 0, "rating": 1}).to_list(5000)
-    count = len(docs)
-    avg   = round(sum(d["rating"] for d in docs) / count, 1) if count else 0
-    return {"rating_avg": avg, "review_count": count}
+    cursor = db.reviews.aggregate([
+        {"$match": {"company_id": company_id}},
+        {"$group": {"_id": None, "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+    ])
+    docs = await cursor.to_list(1)
+    if not docs:
+        return {"rating_avg": 0, "review_count": 0}
+    return {"rating_avg": round(docs[0]["avg"], 1), "review_count": docs[0]["count"]}
 
 @api_router.get("/company/{company_id}")
 async def get_company(company_id: str, request: Request):
-    company = await db.companies.find_one({"id": company_id})
+    company, ratings = await asyncio.gather(
+        db.companies.find_one({"id": company_id}, {"_id": 0, "owner_id": 0}),
+        rating_stats(company_id),
+    )
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
-    viewer  = client_ip(request)
-    already = await db.company_views.find_one({"company_id": company_id, "viewer": viewer})
-    if not already:
-        await db.company_views.insert_one({"company_id": company_id, "viewer": viewer,
-                                           "ts": datetime.now(timezone.utc).isoformat()})
+    viewer = client_ip(request)
+    result = await db.company_views.update_one(
+        {"company_id": company_id, "viewer": viewer},
+        {"$setOnInsert": {"ts": now_iso()}},
+        upsert=True,
+    )
+    if result.upserted_id is not None:
         await db.companies.update_one({"id": company_id}, {"$inc": {"views": 1}})
         company["views"] = company.get("views", 0) + 1
-    company.pop("_id", None)
-    company.pop("owner_id", None)
-    company.update(await rating_stats(company_id))
+    company.update(ratings)
     return company
 
-@api_router.put("/company/{company_id}")
-async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"id": company_id})
+async def _company_for_owner(company_id: str, user: dict, projection: Optional[dict] = None) -> dict:
+    proj = {"_id": 0, "owner_id": 1}
+    if projection:
+        proj.update(projection)
+    company = await db.companies.find_one({"id": company_id}, proj)
     if not company:
         raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
     if company["owner_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="უფლება არ გაქვთ")
-    updates = {k: v for k, v in data.model_dump().items() if v is not None}
-    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.companies.update_one({"id": company_id}, {"$set": updates})
-    return await db.companies.find_one({"id": company_id}, {"_id": 0})
+    return company
 
-@api_router.post("/upload")
-@limiter.limit("30/hour")
-async def generic_upload(request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    ext      = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
-    is_video = ext in VIDEO_EXTS
-    path, _, _ = await _upload_to_storage(user["id"], file, VIDEO_EXTS if is_video else IMAGE_EXTS, MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE)
-    return {"url": f"/api/files/{path}", "type": "video" if is_video else "image"}
+@api_router.put("/company/{company_id}")
+async def update_company(company_id: str, data: CompanyUpdate, user: dict = Depends(get_current_user)):
+    await _company_for_owner(company_id, user)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    updates["updated_at"] = now_iso()
+    return await db.companies.find_one_and_update(
+        {"id": company_id}, {"$set": updates}, projection={"_id": 0}, return_document=True
+    )
 
 async def _upload_to_storage(user_id: str, file: UploadFile, allowed_exts: set, max_size: int) -> tuple[str, str, str]:
-    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "").lower()
+    ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "").lower()
     if ext not in allowed_exts:
         raise HTTPException(status_code=400, detail=f"ფაილის ტიპი დაუშვებელია: .{ext}")
     data = await file.read()
@@ -707,6 +784,89 @@ async def _upload_to_storage(user_id: str, file: UploadFile, allowed_exts: set, 
     content_type = MIME_TYPES.get(ext, file.content_type or "application/octet-stream")
     result       = await put_object(path, data, content_type)
     return result["path"], content_type, ext
+
+async def _form_file(request: Request) -> UploadFile:
+    """ფრონტენდი ფაილს სხვადასხვა სახელით აგზავნის (file/image/logo/cover/media) —
+    ვიღებთ ფორმის პირველ ფაილს, რომ 422 არ დაბრუნდეს."""
+    form = await request.form()
+    for value in form.values():
+        if isinstance(value, StarletteUploadFile):
+            return value
+    raise HTTPException(status_code=400, detail="ფაილი არ არის მიმაგრებული")
+
+@api_router.post("/upload")
+@limiter.limit("30/hour")
+async def generic_upload(request: Request, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    ext      = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "").lower()
+    is_video = ext in VIDEO_EXTS
+    path, _, _ = await _upload_to_storage(
+        user["id"], file,
+        VIDEO_EXTS if is_video else IMAGE_EXTS,
+        MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE,
+    )
+    return {"url": f"/api/files/{path}", "type": "video" if is_video else "image"}
+
+async def _upload_company_image(company_id: str, request: Request, user: dict, field: str) -> dict:
+    await _company_for_owner(company_id, user)
+    file       = await _form_file(request)
+    path, _, _ = await _upload_to_storage(user["id"], file, IMAGE_EXTS, MAX_IMAGE_SIZE)
+    url        = f"/api/files/{path}"
+    await db.companies.update_one({"id": company_id}, {"$set": {field: url, "updated_at": now_iso()}})
+    return {"status": "ok", "url": url, field: url}
+
+@api_router.post("/company/{company_id}/logo")
+@limiter.limit("60/hour")
+async def upload_company_logo(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    return await _upload_company_image(company_id, request, user, "logo_url")
+
+@api_router.post("/company/{company_id}/cover")
+@limiter.limit("60/hour")
+async def upload_company_cover(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    return await _upload_company_image(company_id, request, user, "cover_url")
+
+@api_router.post("/company/{company_id}/media")
+@limiter.limit("60/hour")
+async def upload_company_media(company_id: str, request: Request, user: dict = Depends(get_current_user)):
+    await _company_for_owner(company_id, user)
+    file     = await _form_file(request)
+    ext      = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "").lower()
+    is_video = ext in VIDEO_EXTS
+    if ext not in MEDIA_EXTS:
+        raise HTTPException(status_code=400, detail=f"ფაილის ტიპი დაუშვებელია: .{ext}")
+    path, _, _ = await _upload_to_storage(
+        user["id"], file,
+        VIDEO_EXTS if is_video else IMAGE_EXTS,
+        MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE,
+    )
+    item = {"id": str(uuid.uuid4()), "url": f"/api/files/{path}",
+            "type": "video" if is_video else "image", "created_at": now_iso()}
+    updated = await db.companies.find_one_and_update(
+        {"id": company_id},
+        {"$push": {"media": item}, "$set": {"updated_at": item["created_at"]}},
+        projection={"_id": 0, "media": 1}, return_document=True,
+    )
+    return {"status": "ok", "url": item["url"], "item": item, "media": updated.get("media", [])}
+
+@api_router.delete("/company/{company_id}/media/{media_id}")
+async def delete_company_media(company_id: str, media_id: str, user: dict = Depends(get_current_user)):
+    await _company_for_owner(company_id, user)
+    updated, _ = await asyncio.gather(
+        db.companies.find_one_and_update(
+            {"id": company_id},
+            {"$pull": {"media": {"id": media_id}}, "$set": {"updated_at": now_iso()}},
+            projection={"_id": 0, "media": 1}, return_document=True,
+        ),
+        db.photo_comments.delete_many({"company_id": company_id, "media_id": media_id}),
+    )
+    media = (updated or {}).get("media", [])
+    if any(isinstance(m, dict) and m.get("url") == media_id for m in media) or media_id in media:
+        updated = await db.companies.find_one_and_update(
+            {"id": company_id},
+            {"$pull": {"media": {"url": media_id}}, "$set": {"updated_at": now_iso()}},
+            projection={"_id": 0, "media": 1}, return_document=True,
+        )
+        media = (updated or {}).get("media", [])
+    return {"status": "ok", "media": media}
 
 @api_router.get("/files/{path:path}")
 async def serve_file(path: str):
@@ -720,31 +880,33 @@ async def serve_file(path: str):
         raise HTTPException(status_code=502, detail="ფაილის სერვისი მიუწვდომელია")
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="ფაილის სერვისი მიუწვდომელია")
-    return Response(content=data, media_type=content_type)
+    return Response(content=data, media_type=content_type,
+                    headers={"Cache-Control": FILE_CACHE_CONTROL})
 
 @api_router.post("/account/change-password")
 @limiter.limit("10/hour")
 async def change_password(request: Request, data: PasswordChange, user: dict = Depends(get_current_user)):
-    full = await db.users.find_one({"id": user["id"]})
-    if not verify_password(data.current_password, full["password_hash"]):
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 1})
+    if not await verify_password_async(data.current_password, full["password_hash"]):
         raise HTTPException(status_code=400, detail="მიმდინარე პაროლი არასწორია")
     if len(data.new_password) < 6:
         raise HTTPException(status_code=400, detail="ახალი პაროლი მინიმუმ 6 სიმბოლო")
-    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(data.new_password)}})
+    password_hash = await hash_password_async(data.new_password)
+    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": password_hash}})
     return {"status": "პაროლი განახლდა"}
 
 async def _create_verification(user_id: str, field: str, new_value: str, deliver_to: str, purpose: str) -> bool:
     code = gen_code()
     await db.verifications.delete_many({"user_id": user_id, "field": field})
     await db.verifications.insert_one({"user_id": user_id, "field": field, "new_value": new_value,
-        "code": code, "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()})
+        "code": code, "expires_at": expires_iso(10)})
     return await send_verification_email(deliver_to, code, purpose)
 
 @api_router.post("/account/request-email-change")
 @limiter.limit("5/hour")
 async def request_email_change(request: Request, data: ContactChangeRequest, user: dict = Depends(get_current_user)):
     new_email = data.new_value.lower()
-    if await db.users.find_one({"email": new_email}):
+    if await db.users.find_one({"email": new_email}, {"_id": 1}):
         raise HTTPException(status_code=400, detail="ეს მეილი უკვე გამოყენებულია")
     await _create_verification(user["id"], "email", new_email, new_email, f"დაადასტურეთ ახალი მეილი: {new_email}")
     return {"status": "კოდი გაიგზავნა ახალ მეილზე"}
@@ -761,18 +923,22 @@ async def confirm_change(request: Request, data: CodeConfirm, user: dict = Depen
     v = await db.verifications.find_one({"user_id": user["id"], "code": data.code})
     if not v:
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
-    if datetime.fromisoformat(v["expires_at"]) < datetime.now(timezone.utc):
+    if is_expired(v["expires_at"]):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
     field, new_val = v["field"], v["new_value"]
     if field == "email":
-        if await db.users.find_one({"email": new_val, "id": {"$ne": user["id"]}}):
+        if await db.users.find_one({"email": new_val, "id": {"$ne": user["id"]}}, {"_id": 1}):
             await db.verifications.delete_many({"user_id": user["id"], "field": field})
             raise HTTPException(status_code=400, detail="ეს მეილი უკვე გამოყენებულია")
-        await db.users.update_one({"id": user["id"]}, {"$set": {"email": new_val}})
-        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"email": new_val}})
+        await asyncio.gather(
+            db.users.update_one({"id": user["id"]}, {"$set": {"email": new_val}}),
+            db.companies.update_one({"owner_id": user["id"]}, {"$set": {"email": new_val}}),
+        )
     elif field == "phone":
-        await db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}})
-        await db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}})
+        await asyncio.gather(
+            db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}}),
+            db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}}),
+        )
     await db.verifications.delete_many({"user_id": user["id"], "field": field})
     return {"status": "მონაცემები წარმატებით განახლდა"}
 
@@ -780,11 +946,13 @@ async def confirm_change(request: Request, data: CodeConfirm, user: dict = Depen
 async def delete_account(user: dict = Depends(get_current_user)):
     user_id   = user["id"]
     email     = user.get("email")
-    companies = await db.companies.find({"owner_id": user_id}, {"id": 1}).to_list(100)
+    companies = await db.companies.find({"owner_id": user_id}, {"_id": 0, "id": 1}).to_list(100)
     cids      = [c["id"] for c in companies]
     await _purge_user_data(user_id, email, cids)
-    await db.companies.delete_many({"owner_id": user_id})
-    await db.users.delete_one({"id": user_id})
+    await asyncio.gather(
+        db.companies.delete_many({"owner_id": user_id}),
+        db.users.delete_one({"id": user_id}),
+    )
     return {"status": "ანგარიში წაშლილია"}
 
 @api_router.get("/chat/inbox")
@@ -812,7 +980,7 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     if not text:
         raise HTTPException(status_code=400, detail="შეტყობინება ცარიელია")
     doc = {"id": str(uuid.uuid4()), "sender_id": user["id"], "recipient_id": body.get("recipient_id"),
-           "text": text, "read": False, "created_at": datetime.now(timezone.utc).isoformat()}
+           "text": text, "read": False, "created_at": now_iso()}
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -820,8 +988,8 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
 @api_router.get("/chat/{company_id}/messages")
 async def get_company_chat_messages(company_id: str, user: dict = Depends(get_current_user)):
     return await db.messages.find({
-        "$or": [{"company_id": company_id, "sender_id": user["id"]},
-                {"company_id": company_id, "recipient_id": user["id"]}]
+        "company_id": company_id,
+        "$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}],
     }, {"_id": 0}).sort("created_at", 1).to_list(200) or []
 
 @api_router.post("/chat/{company_id}/messages")
@@ -830,11 +998,10 @@ async def send_company_chat_message(company_id: str, request: Request, user: dic
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="შეტყობინება ცარიელია")
-    company      = await db.companies.find_one({"id": company_id})
+    company      = await db.companies.find_one({"id": company_id}, {"_id": 0, "owner_id": 1})
     recipient_id = company["owner_id"] if company else None
     doc = {"id": str(uuid.uuid4()), "company_id": company_id, "sender_id": user["id"],
-           "recipient_id": recipient_id, "text": text, "read": False,
-           "created_at": datetime.now(timezone.utc).isoformat()}
+           "recipient_id": recipient_id, "text": text, "read": False, "created_at": now_iso()}
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -855,7 +1022,7 @@ async def post_media_comment(company_id: str, media_id: str, request: Request, u
     comment = {"id": str(uuid.uuid4()), "company_id": company_id, "media_id": media_id,
                "user_id": user["id"], "user_name": user.get("name", "მომხმარებელი"),
                "avatar_url": user.get("avatar_url", ""), "text": text, "image_url": image_url,
-               "created_at": datetime.now(timezone.utc).isoformat()}
+               "created_at": now_iso()}
     await db.photo_comments.insert_one(comment)
     comment.pop("_id", None)
     return comment
