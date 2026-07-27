@@ -643,12 +643,15 @@ async def chat_typing(request: Request, user: dict = Depends(get_current_user)):
 async def chat_typing_company(company_id: str, user: dict = Depends(get_current_user)):
     return {"status": "ok"}
 
+# --- FIX: /company/me აღარ აგდებს 404-ს, თუ user-ს company profile არა აქვს.
+# ნაცვლად ამისა აბრუნებს 200 OK-ს და null-ს — ეს "ნორმალური" მდგომარეობაა
+# (მაგ. role="user" ტიპის მომხმარებლისთვის), არა error. ეს გამორიცხავს
+# ფრონტენდში დაფიქსირებულ "Uncaught (in promise) AxiosError 404" შეცდომას
+# ყოველგვარი ფრონტენდის ცვლილების გარეშე.
 @api_router.get("/company/me")
 async def get_my_company(user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
-    if not company:
-        raise HTTPException(status_code=404, detail="პროფილი ვერ მოიძებნა")
-    return company
+    return company  # None თუ არ არსებობს — status 200-ით
 
 async def rating_stats(company_id: str) -> dict:
     docs  = await db.reviews.find({"company_id": company_id}, {"_id": 0, "rating": 1}).to_list(5000)
