@@ -40,7 +40,10 @@ export default function SupportChat() {
   }, [messages]);
 
   useEffect(() => {
-    if (open) setUnread(0);
+    if (!open) return;
+
+    setUnread(0);
+    api.post("/support/read").catch(() => {});
   }, [open]);
 
   const send = async () => {
