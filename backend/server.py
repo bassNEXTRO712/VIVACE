@@ -140,6 +140,7 @@ INDEXES = [
     ("messages",         [("sender_id", 1), ("recipient_id", 1), ("created_at", 1)], {}),
     ("notifications",    [("user_id", 1), ("created_at", -1)],    {}),
     ("support_messages", [("user_id", 1), ("created_at", 1)],     {}),
+    ("support_messages", [("user_id", 1), ("sender", 1), ("read_by_user", 1), ("created_at", 1)], {}),
     ("verifications",    [("user_id", 1), ("field", 1)],          {}),
     ("password_resets",  [("email", 1)],                          {}),
 ]
@@ -549,7 +550,6 @@ async def get_user_notifications(user: dict = Depends(get_current_user)):
 
 @api_router.get("/notifications/summary")
 async def notifications_summary(user: dict = Depends(get_current_user)):
-    """ზარის ღილაკისთვის: {count, items} — ჩატის ჩაუკითხავები + სისტემური შეტყობინებები."""
     chat_link = "/dashboard?tab=messages" if user.get("role") == "company" else "/profile?tab=messages"
     threads, notes = await asyncio.gather(
         _chat_threads(user["id"], only_unread=True),
@@ -666,8 +666,16 @@ async def admin_reply_to_user(user_id: str, request: Request, user: dict = Depen
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="ტექსტი ცარიელია")
-    doc = {"id": str(uuid.uuid4()), "user_id": user_id, "user_name": "ადმინი",
-           "email": "", "text": text, "sender": "admin", "created_at": now_iso()}
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "user_name": "ადმინი",
+        "email": "",
+        "text": text,
+        "sender": "admin",
+        "read_by_user": False,
+        "created_at": now_iso(),
+    }
     await db.support_messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -678,8 +686,16 @@ async def post_support_message(request: Request, user: dict = Depends(get_curren
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="ტექსტი ცარიელია")
-    doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "user_name": user.get("name", ""),
-           "email": user.get("email", ""), "text": text, "sender": "user", "created_at": now_iso()}
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "text": text,
+        "sender": "user",
+        "read_by_user": True,
+        "created_at": now_iso(),
+    }
     await db.support_messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -687,6 +703,14 @@ async def post_support_message(request: Request, user: dict = Depends(get_curren
 @api_router.get("/support/messages")
 async def get_my_support_messages(user: dict = Depends(get_current_user)):
     return await db.support_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(200) or []
+
+@api_router.post("/support/read")
+async def mark_support_messages_read(user: dict = Depends(get_current_user)):
+    await db.support_messages.update_many(
+        {"user_id": user["id"], "sender": "admin", "read_by_user": {"$ne": True}},
+        {"$set": {"read_by_user": True}},
+    )
+    return {"status": "ok"}
 
 @api_router.get("/company/{company_id}/reviews")
 async def get_company_reviews(company_id: str):
@@ -738,7 +762,6 @@ async def chat_typing(request: Request, user: dict = Depends(get_current_user)):
 async def chat_typing_company(company_id: str, user: dict = Depends(get_current_user)):
     return {"status": "ok"}
 
-# /company/me აბრუნებს 200 OK-ს და null-ს, თუ მომხმარებელს კომპანიის პროფილი არა აქვს.
 @api_router.get("/company/me")
 async def get_my_company(user: dict = Depends(get_current_user)):
     return await db.companies.find_one({"owner_id": user["id"]}, {"_id": 0})
@@ -806,8 +829,6 @@ async def _upload_to_storage(user_id: str, file: UploadFile, allowed_exts: set, 
     return result["path"], content_type, ext
 
 async def _form_file(request: Request) -> UploadFile:
-    """ფრონტენდი ფაილს სხვადასხვა სახელით აგზავნის (file/image/logo/cover/media) —
-    ვიღებთ ფორმის პირველ ფაილს, რომ 422 არ დაბრუნდეს."""
     form = await request.form()
     for value in form.values():
         if isinstance(value, StarletteUploadFile):
@@ -982,7 +1003,6 @@ async def chat_inbox(user: dict = Depends(get_current_user)):
     ).sort("created_at", -1).to_list(100) or []
 
 async def _chat_threads(me: str, only_unread: bool = False) -> list:
-    """ერთი ჩანაწერი = ერთი საუბარი (და არა ცალკეული შეტყობინება)."""
     cursor = db.messages.aggregate([
         {"$match": {"$or": [{"sender_id": me}, {"recipient_id": me}]}},
         {"$addFields": {"peer_id": {"$cond": [{"$eq": ["$sender_id", me]}, "$recipient_id", "$sender_id"]}}},
@@ -1039,8 +1059,6 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     recipient_id = body.get("recipient_id")
     company_id   = body.get("company_id")
     if not company_id:
-        # პასუხი იმავე საუბარში რჩება — company_id მემკვიდრეობით გადმოდის, თორემ
-        # ვიზიტორის ChatWidget-ი (რომელიც company_id-ით ფილტრავს) პასუხს ვერ დაინახავს.
         prev = await db.messages.find_one(
             {"company_id": {"$ne": None},
              "$or": [{"sender_id": user["id"], "recipient_id": recipient_id},
