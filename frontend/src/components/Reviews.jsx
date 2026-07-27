@@ -1,147 +1,96 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageCircle, X, Send, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Star, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { requestNotifyPermission, notify } from "@/lib/notify";
 import { formatTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
-const POLL_OPEN_MS = 4000;
-const POLL_CLOSED_MS = 20000;
+const MAX_LEN = 1000;
 
-const mergeMessages = (prev, incoming) => {
-  if (!incoming.length) return prev;
-  const byId = new Map(prev.map((m) => [m.id, m]));
-  let changed = false;
-  for (const m of incoming) {
-    if (!byId.has(m.id)) changed = true;
-    byId.set(m.id, m);
-  }
-  if (!changed) return prev;
-  return [...byId.values()].sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
-};
+function Stars({ value = 0, size = "w-4 h-4", onSelect }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((n) => {
+        const filled = n <= Math.round(value);
+        const cls = `${size} ${filled ? "text-primary fill-primary" : "text-muted-foreground"}`;
+        return onSelect ? (
+          <button
+            key={n}
+            type="button"
+            data-testid={`review-star-${n}`}
+            aria-label={`${n} ვარსკვლავი`}
+            onClick={() => onSelect(n)}
+            className="p-0.5"
+          >
+            <Star className={cls} />
+          </button>
+        ) : (
+          <Star key={n} className={cls} />
+        );
+      })}
+    </div>
+  );
+}
 
-export default function ChatWidget({ companyId, companyName, isOwner, open, setOpen }) {
+export default function Reviews({ companyId, isOwner = false }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [messages, setMessages] = useState([]);
+  const [reviews, setReviews] = useState([]); // ყოველთვის მასივი — არასდროს undefined
+  const [loading, setLoading] = useState(true);
+  const [rating, setRating] = useState(5);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [unread, setUnread] = useState(0);
 
-  const listRef = useRef(null);
-  const endRef = useRef(null);
-  const sinceRef = useRef(null);
-  const loadedRef = useRef(false);
-  const openRef = useRef(open);
-  const stoppedRef = useRef(false);
-
-  openRef.current = open;
-
-  // დახურულ ვიჯეტზე მხოლოდ ჩაუკითხავების რაოდენობას ვიღებთ (მსუბუქი count),
-  // ღიაზე — მხოლოდ ახალ შეტყობინებებს `since` კურსორით.
-  const poll = useCallback(
+  const load = useCallback(
     async (signal) => {
-      if (!user || stoppedRef.current) return;
+      if (!companyId) return;
       try {
-        if (!openRef.current && loadedRef.current) {
-          const { data } = await api.get(`/chat/${companyId}/unread-count`, { signal });
-          setUnread(data?.unread ?? 0);
-          return;
-        }
-        const params = sinceRef.current ? { since: sinceRef.current } : undefined;
-        const { data } = await api.get(`/chat/${companyId}/messages`, { params, signal });
-        if (!Array.isArray(data)) return;
-        loadedRef.current = true;
-        if (data.length) {
-          sinceRef.current = data[data.length - 1].created_at;
-          const fromCompany = data.filter((m) => m.sender_id !== user.id);
-          setMessages((prev) => mergeMessages(prev, data));
-          if (fromCompany.length && (!openRef.current || document.hidden)) {
-            notify("VIVACE — პასუხი კომპანიისგან", `${companyName} გიპასუხათ.`);
-            setUnread((n) => n + fromCompany.length);
-          }
-        }
+        const { data } = await api.get(`/company/${companyId}/reviews`, { signal });
+        setReviews(Array.isArray(data) ? data : []);
       } catch (err) {
         if (signal?.aborted || err?.code === "ERR_CANCELED") return;
-        // 401/403-ზე polling-ს ვწყვეტთ, რომ უსასრულო მარცხი არ გაგრძელდეს
-        if ([401, 403].includes(err?.response?.status)) stoppedRef.current = true;
+        setReviews([]);
+      } finally {
+        setLoading(false);
       }
     },
-    [companyId, companyName, user]
+    [companyId]
   );
 
   useEffect(() => {
-    // კომპანიის/მომხმარებლის შეცვლაზე მდგომარეობის სრული გადატვირთვა
-    sinceRef.current = null;
-    loadedRef.current = false;
-    stoppedRef.current = false;
-    setMessages([]);
-    setUnread(0);
-  }, [companyId, user?.id]);
+    const controller = new AbortController();
+    setLoading(true);
+    setReviews([]);
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
-  useEffect(() => {
-    if (!user || isOwner) return;
-    requestNotifyPermission();
-
-    let timer = null;
-    let controller = null;
-    let cancelled = false;
-
-    const tick = async () => {
-      if (cancelled || document.hidden) return schedule();
-      controller = new AbortController();
-      await poll(controller.signal);
-      schedule();
+  const { avg, count, mine } = useMemo(() => {
+    const list = reviews || [];
+    const total = list.reduce((sum, r) => sum + (Number(r?.rating) || 0), 0);
+    return {
+      count: list.length,
+      avg: list.length ? Math.round((total / list.length) * 10) / 10 : 0,
+      mine: user ? list.find((r) => r?.user_id === user.id) : undefined,
     };
+  }, [reviews, user]);
 
-    const schedule = () => {
-      if (cancelled || stoppedRef.current) return;
-      clearTimeout(timer);
-      timer = setTimeout(tick, openRef.current ? POLL_OPEN_MS : POLL_CLOSED_MS);
-    };
-
-    const onVisible = () => {
-      if (!document.hidden) tick();
-    };
-
-    tick();
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller?.abort();
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [user, isOwner, poll]);
-
-  useEffect(() => {
-    if (!open || !user || isOwner) return;
-    api
-      .post(`/chat/${companyId}/read`, {})
-      .then(() => setUnread(0))
-      .catch(() => {});
-  }, [open, user, isOwner, companyId, messages.length]);
-
-  useEffect(() => {
-    if (!open) return;
-    // მხოლოდ ჩატის კონტეინერში ვასქროლავთ — გვერდი ადგილიდან არ წანაცვლდება
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [messages, open]);
-
-  const send = async () => {
+  const submit = async () => {
     const value = text.trim();
-    if (!value || sending) return;
+    if (sending || (!value && !rating)) return;
     setSending(true);
     try {
-      const { data } = await api.post(`/chat/${companyId}/messages`, { text: value });
-      setMessages((prev) => mergeMessages(prev, [data]));
-      if (data?.created_at && (!sinceRef.current || data.created_at > sinceRef.current)) {
-        sinceRef.current = data.created_at;
+      const { data } = await api.post(`/company/${companyId}/reviews`, {
+        rating: Number(rating) || 5,
+        text: value,
+      });
+      if (data?.id) {
+        setReviews((prev) => [data, ...(prev || []).filter((r) => r?.id !== data.id)]);
       }
       setText("");
+      setRating(5);
     } catch (err) {
       apiError(err);
     } finally {
@@ -149,78 +98,25 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
     }
   };
 
-  const rendered = useMemo(
-    () =>
-      messages.map((m) => {
-        const isVisitor = m.sender_id === user?.id;
-        return (
-          <div key={m.id} className={`flex flex-col ${isVisitor ? "items-end" : "items-start"}`}>
-            <div
-              className={`max-w-[75%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
-                isVisitor
-                  ? "bg-primary text-primary-foreground rounded-br-none"
-                  : "bg-secondary text-foreground rounded-bl-none"
-              }`}
-            >
-              {m.text}
-            </div>
-            <span className="text-[10px] text-muted-foreground mt-1 px-1">
-              {formatTime(m.created_at)}
-            </span>
-          </div>
-        );
-      }),
-    [messages, user?.id]
-  );
-
-  if (isOwner) return null;
-
   return (
-    <>
-      {!open && (
-        <button
-          data-testid="open-chat-button"
-          onClick={() => setOpen(true)}
-          aria-label={unread > 0 ? `ჩატი, ${unread} ახალი შეტყობინება` : "ჩატი"}
-          className="fixed bottom-6 right-6 z-40 bg-primary hover:bg-orange-600 transition-colors text-primary-foreground rounded-full h-14 w-14 flex items-center justify-center shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
-        >
-          <MessageCircle className="w-6 h-6" />
-          {unread > 0 && (
-            <span
-              data-testid="chat-unread-badge"
-              className="absolute -top-1 -right-1 min-w-6 h-6 px-1.5 rounded-full bg-destructive text-white text-xs font-bold flex items-center justify-center border-2 border-background"
-            >
-              {unread > 99 ? "99+" : unread}
-            </span>
-          )}
-        </button>
-      )}
+    <section className="space-y-5" data-testid="reviews-section">
+      <div className="flex items-center gap-3">
+        <h3 className="text-lg font-semibold">შეფასებები</h3>
+        <Stars value={avg} />
+        <span className="text-sm text-muted-foreground" data-testid="reviews-summary">
+          {count > 0 ? `${avg} / 5 · ${count} შეფასება` : "შეფასება ჯერ არ არის"}
+        </span>
+      </div>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-label={`ჩატი — ${companyName}`}
-          className="fixed bottom-6 right-6 z-40 w-[92vw] max-w-sm bg-card border border-border rounded-xl shadow-[0_8px_40px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
-          style={{ height: "480px" }}
-        >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary/50">
-            <div>
-              <p className="font-medium text-sm">{companyName}</p>
-              <p className="text-xs text-muted-foreground">ჩატი კომპანიასთან</p>
-            </div>
-            <button data-testid="close-chat-button" onClick={() => setOpen(false)} aria-label="დახურვა">
-              <X className="w-5 h-5 text-muted-foreground hover:text-foreground" />
-            </button>
-          </div>
-
+      {!isOwner && (
+        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
           {!user ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
-              <MessageCircle className="w-10 h-10 text-primary" />
+            <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                კომპანიასთან საუბრისთვის გაიარეთ ავტორიზაცია.
+                შეფასების დასატოვებლად გაიარეთ ავტორიზაცია.
               </p>
               <Button
-                data-testid="chat-login-button"
+                data-testid="reviews-login-button"
                 onClick={() => navigate("/login")}
                 className="bg-primary hover:bg-orange-600 transition-colors"
               >
@@ -229,46 +125,75 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
             </div>
           ) : (
             <>
-              <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-3" aria-live="polite">
-                {messages.length === 0 && (
-                  <p className="text-center text-xs text-muted-foreground py-6">
-                    დაწერეთ პირველი შეტყობინება
-                  </p>
-                )}
-                {rendered}
-                <div ref={endRef} />
-              </div>
-              <div className="p-3 border-t border-border flex gap-2">
-                <Input
-                  data-testid="chat-message-input"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
-                    e.preventDefault();
-                    send();
-                  }}
-                  maxLength={2000}
-                  placeholder="შეტყობინება..."
-                />
+              {mine && (
+                <p className="text-xs text-muted-foreground">
+                  თქვენ უკვე დატოვეთ შეფასება — ახალი დაემატება სიაში.
+                </p>
+              )}
+              <Stars value={rating} size="w-6 h-6" onSelect={setRating} />
+              <Textarea
+                data-testid="review-text-input"
+                value={text}
+                onChange={(e) => setText(e.target.value.slice(0, MAX_LEN))}
+                placeholder="დაწერეთ თქვენი შეფასება..."
+                rows={3}
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {text.length}/{MAX_LEN}
+                </span>
                 <Button
-                  data-testid="chat-send-button"
-                  size="icon"
-                  onClick={send}
+                  data-testid="review-submit-button"
+                  onClick={submit}
                   disabled={sending || !text.trim()}
-                  className="bg-primary hover:bg-orange-600 transition-colors flex-shrink-0"
+                  className="bg-primary hover:bg-orange-600 transition-colors"
                 >
-                  {sending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
+                  {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : "გამოქვეყნება"}
                 </Button>
               </div>
             </>
           )}
         </div>
       )}
-    </>
+
+      {loading ? (
+        <div className="flex justify-center py-6">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : count === 0 ? (
+        <p className="text-sm text-muted-foreground py-4">ჯერ არავის დაუტოვებია შეფასება.</p>
+      ) : (
+        <ul className="space-y-4" data-testid="reviews-list">
+          {(reviews || []).map((r, i) => (
+            <li key={r?.id || i} className="rounded-xl border border-border bg-card p-4">
+              <div className="flex items-center gap-3">
+                {r?.avatar_url ? (
+                  <img
+                    src={r.avatar_url}
+                    alt=""
+                    loading="lazy"
+                    className="w-8 h-8 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs">
+                    {(r?.user_name || "მ").slice(0, 1)}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{r?.user_name || "მომხმარებელი"}</p>
+                  <p className="text-[11px] text-muted-foreground">{formatTime(r?.created_at)}</p>
+                </div>
+                <div className="ml-auto">
+                  <Stars value={Number(r?.rating) || 0} />
+                </div>
+              </div>
+              {r?.text && (
+                <p className="text-sm mt-3 whitespace-pre-wrap break-words">{r.text}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
