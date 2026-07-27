@@ -550,14 +550,21 @@ async def get_user_notifications(user: dict = Depends(get_current_user)):
 @api_router.get("/notifications/summary")
 async def notifications_summary(user: dict = Depends(get_current_user)):
     """ზარის ღილაკისთვის: {count, items} — ჩატის ჩაუკითხავები + სისტემური შეტყობინებები."""
-    chat_link = "/dashboard?tab=messages" if user.get("role") == "company" else "/profile?tab=messages"
+    is_company = user.get("role") == "company"
     threads, notes = await asyncio.gather(
         _chat_threads(user["id"], only_unread=True),
         db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(20),
     )
+
+    def chat_link(t: dict) -> Optional[str]:
+        # კომპანია საუბარს პანელში ხსნის, ვიზიტორი — კომპანიის საჯარო გვერდზე (ChatWidget)
+        if is_company:
+            return "/dashboard?tab=messages"
+        return f"/company/{t['company_id']}" if t.get("company_id") else None
+
     items = [{
         "type": "chat", "title": t["peer_name"], "subtitle": t["last_text"],
-        "count": t["unread"], "link": chat_link, "created_at": t["last_at"],
+        "count": t["unread"], "link": chat_link(t), "created_at": t["last_at"],
     } for t in threads]
     items += [{
         "type": "system", "title": "შეტყობინება", "subtitle": n.get("text", ""),
