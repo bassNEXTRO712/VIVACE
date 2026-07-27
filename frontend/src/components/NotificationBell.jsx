@@ -14,7 +14,6 @@ export default function NotificationBell() {
  
   const load = useCallback(async (signal) => {
     try {
-      // summary აბრუნებს {count, items} — ჩატის ჩაუკითხავები + სისტემური შეტყობინებები
       const { data: res } = await api.get("/notifications/summary", { signal });
       setData({
         count: Number(res?.count) || 0,
@@ -28,19 +27,26 @@ export default function NotificationBell() {
  
   useEffect(() => {
     const controller = new AbortController();
+    const refresh = () => load();
+
     load(controller.signal);
+
     const t = setInterval(() => {
       if (!document.hidden) load();
     }, POLL_MS);
-    const onVisible = () => !document.hidden && load();
+
+    const onVisible = () => {
+      if (!document.hidden) load();
+    };
+
     document.addEventListener("visibilitychange", onVisible);
-    // ჩატის წაკითხვისთანავე badge განახლდეს (ChatWidget/CompanyInbox აგზავნის ამ event-ს)
-    window.addEventListener("chat-unread-refresh", load);
+    window.addEventListener("chat-unread-refresh", refresh);
+
     return () => {
       controller.abort();
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("chat-unread-refresh", load);
+      window.removeEventListener("chat-unread-refresh", refresh);
     };
   }, [load]);
  
@@ -58,8 +64,11 @@ export default function NotificationBell() {
   }, []);
  
   const openMenu = () => {
-    setOpen((o) => !o);
-    if (!open) load();
+    setOpen((prev) => {
+      const next = !prev;
+      if (next) load();
+      return next;
+    });
   };
  
   return (
@@ -81,9 +90,11 @@ export default function NotificationBell() {
           </span>
         )}
       </button>
+
       {open && (
         <div className="absolute right-0 mt-2 w-80 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden z-50">
           <div className="px-4 py-3 border-b border-border font-medium text-sm">შეტყობინებები</div>
+
           {data.items.length === 0 ? (
             <p className="text-sm text-muted-foreground p-6 text-center">ახალი შეტყობინება არ არის</p>
           ) : (
