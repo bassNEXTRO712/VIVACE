@@ -550,7 +550,7 @@ async def get_user_notifications(user: dict = Depends(get_current_user)):
 
 @api_router.get("/notifications/summary")
 async def notifications_summary(user: dict = Depends(get_current_user)):
-    chat_link = "/dashboard?tab=messages" if user.get("role") == "company" else "/profile?tab=messages"
+    chat_link = "/dashboard?tab=messages"
     threads, notes = await asyncio.gather(
         _chat_threads(user["id"], only_unread=True),
         db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(20),
@@ -980,7 +980,7 @@ async def confirm_change(request: Request, data: CodeConfirm, user: dict = Depen
             db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}}),
             db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}}),
         )
-    await db.verifications.delete_many({"user_id": user["id"], "field": field})
+    await db.verifications.delete_many({"user_id": user["id"]}, "field", field)
     return {"status": "მონაცემები წარმატებით განახლდა"}
 
 @api_router.delete("/account")
