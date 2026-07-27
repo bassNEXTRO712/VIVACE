@@ -980,7 +980,7 @@ async def confirm_change(request: Request, data: CodeConfirm, user: dict = Depen
             db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}}),
             db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}}),
         )
-    await db.verifications.delete_many({"user_id": user["id"]}, "field", field)
+   await db.verifications.delete_many({"user_id": user["id"], "field": field})
     return {"status": "მონაცემები წარმატებით განახლდა"}
 
 @api_router.delete("/account")
