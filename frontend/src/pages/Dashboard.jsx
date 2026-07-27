@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Building2, LogOut, User, Images, Shield, ExternalLink, Loader2, MessageSquare, Home as HomeIcon } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -16,30 +16,52 @@ import NotificationBell from "@/components/NotificationBell";
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isCompany = user?.role === "company";
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(isCompany);
   const [unread, setUnread] = useState(0);
+  const [tab, setTab] = useState(searchParams.get("tab") || "profile");
   const prevUnread = useRef(0);
+
+  // ზარის ღილაკიდან /dashboard?tab=messages-ზე გადმოსვლა ტაბს ავტომატურად ხსნის
+  useEffect(() => {
+    const next = searchParams.get("tab");
+    if (next) setTab(next);
+  }, [searchParams]);
+
+  const changeTab = (value) => {
+    setTab(value);
+    setSearchParams({ tab: value }, { replace: true });
+  };
+
+  const loadUnread = useCallback(async () => {
+    try {
+      const { data } = await api.get("/chat/inbox/unread-count");
+      const count = data?.unread ?? 0;
+      setUnread(count);
+      if (count > prevUnread.current && prevUnread.current > 0) {
+        notify("VIVACE — ახალი შეტყობინება", "თქვენ მიიღეთ ახალი შეტყობინება კლიენტისგან.");
+      }
+      prevUnread.current = count;
+    } catch (_) {}
+  }, []);
 
   useEffect(() => {
     if (!isCompany) return;
     api.get("/company/me").then(({ data }) => setCompany(data)).finally(() => setLoading(false));
     requestNotifyPermission();
-    const poll = async () => {
-      try {
-        const { data } = await api.get("/chat/inbox/unread-count");
-        setUnread(data.count);
-        if (data.count > prevUnread.current) {
-          notify("VIVACE — ახალი შეტყობინება", "თქვენ მიიღეთ ახალი შეტყობინება კლიენტისგან.");
-        }
-        prevUnread.current = data.count;
-      } catch (_) {}
+    loadUnread();
+    const t = setInterval(() => {
+      if (!document.hidden) loadUnread();
+    }, 8000);
+    // საუბრის გახსნისას (ChatInbox) ბეიჯი მაშინვე გადაითვლება
+    window.addEventListener("chat-unread-refresh", loadUnread);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("chat-unread-refresh", loadUnread);
     };
-    poll();
-    const t = setInterval(poll, 8000);
-    return () => clearInterval(t);
-  }, [isCompany]);
+  }, [isCompany, loadUnread]);
 
   const doLogout = () => {
     logout();
@@ -78,7 +100,7 @@ export default function Dashboard() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {!isCompany ? (
-          <Tabs defaultValue="profile" className="space-y-6">
+          <Tabs value={tab} onValueChange={changeTab} className="space-y-6">
             <TabsList className="bg-card border border-border">
               <TabsTrigger data-testid="tab-profile" value="profile">
                 <User className="w-4 h-4 mr-2" /> პროფილი
@@ -99,7 +121,7 @@ export default function Dashboard() {
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
           </div>
         ) : (
-          <Tabs defaultValue="profile" className="space-y-6">
+          <Tabs value={tab} onValueChange={changeTab} className="space-y-6">
             <TabsList className="bg-card border border-border">
               <TabsTrigger data-testid="tab-profile" value="profile">
                 <User className="w-4 h-4 mr-2" /> პროფილი
@@ -111,8 +133,8 @@ export default function Dashboard() {
                 <MessageSquare className="w-4 h-4 mr-2" /> შეტყობინებები
                 {unread > 0 && (
                   <span data-testid="messages-unread-badge"
-                    className="ml-2 min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center">
-                    {unread}
+                    className="ml-2 min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                    {unread > 99 ? "99+" : unread}
                   </span>
                 )}
               </TabsTrigger>

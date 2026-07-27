@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import api from "@/lib/api";
- 
+
 const POLL_MS = 15000;
 const EMPTY = { count: 0, items: [] };
- 
+
 export default function NotificationBell() {
   const navigate = useNavigate();
   const [data, setData] = useState(EMPTY);
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
- 
+
   const load = useCallback(async (signal) => {
     try {
       // summary აბრუნებს {count, items} — ჩატის ჩაუკითხავები + სისტემური შეტყობინებები
@@ -25,7 +25,7 @@ export default function NotificationBell() {
       setData(EMPTY);
     }
   }, []);
- 
+
   useEffect(() => {
     const controller = new AbortController();
     load(controller.signal);
@@ -43,7 +43,7 @@ export default function NotificationBell() {
       window.removeEventListener("chat-unread-refresh", load);
     };
   }, [load]);
- 
+
   useEffect(() => {
     const onClick = (e) => {
       if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
@@ -56,12 +56,12 @@ export default function NotificationBell() {
       document.removeEventListener("keydown", onEsc);
     };
   }, []);
- 
+
   const openMenu = () => {
     setOpen((o) => !o);
     if (!open) load();
   };
- 
+
   return (
     <div className="relative" ref={boxRef}>
       <button
