@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, Send, Loader2, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
 import { formatTime } from "@/lib/format";
@@ -16,7 +16,7 @@ export default function ChatInbox() {
   const lastTypingSent = useRef(0);
   const endRef = useRef(null);
 
-  const loadInbox = async () => {
+  const loadInbox = useCallback(async () => {
     try {
       const { data } = await api.get("/chat/threads");
       setConvos(Array.isArray(data) ? data : []);
@@ -25,9 +25,9 @@ export default function ChatInbox() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadMessages = async (peerId) => {
+  const loadMessages = useCallback(async (peerId) => {
     if (!peerId) return;
 
     try {
@@ -35,7 +35,7 @@ export default function ChatInbox() {
       setMessages(Array.isArray(data) ? data : []);
       setPeerTyping(false);
     } catch (_) {}
-  };
+  }, []);
 
   const onType = (v) => {
     setText(v);
@@ -53,7 +53,7 @@ export default function ChatInbox() {
     loadInbox();
     const t = setInterval(loadInbox, 6000);
     return () => clearInterval(t);
-  }, []);
+  }, [loadInbox]);
 
   useEffect(() => {
     if (!active?.peer_id) return;
@@ -61,7 +61,7 @@ export default function ChatInbox() {
     loadMessages(active.peer_id);
     const t = setInterval(() => loadMessages(active.peer_id), 4000);
     return () => clearInterval(t);
-  }, [active]);
+  }, [active, loadMessages]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
