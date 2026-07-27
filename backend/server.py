@@ -135,6 +135,7 @@ INDEXES = [
     ("photo_comments",   [("company_id", 1), ("media_id", 1), ("created_at", 1)], {}),
     ("photo_comments",   [("user_id", 1)],                        {}),
     ("messages",         [("recipient_id", 1), ("read", 1)],      {}),
+    ("messages",         [("company_id", 1), ("recipient_id", 1), ("read", 1)], {}),
     ("messages",         [("company_id", 1), ("created_at", 1)],  {}),
     ("messages",         [("sender_id", 1), ("recipient_id", 1), ("created_at", 1)], {}),
     ("notifications",    [("user_id", 1), ("created_at", -1)],    {}),
@@ -985,12 +986,23 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     doc.pop("_id", None)
     return doc
 
+@api_router.get("/chat/{company_id}/unread-count")
+async def chat_company_unread_count(company_id: str, user: dict = Depends(get_current_user)):
+    count = await db.messages.count_documents(
+        {"company_id": company_id, "recipient_id": user["id"], "read": False}
+    )
+    return {"unread": count}
+
 @api_router.get("/chat/{company_id}/messages")
-async def get_company_chat_messages(company_id: str, user: dict = Depends(get_current_user)):
-    return await db.messages.find({
+async def get_company_chat_messages(company_id: str, since: Optional[str] = None,
+                                    user: dict = Depends(get_current_user)):
+    query: dict = {
         "company_id": company_id,
         "$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}],
-    }, {"_id": 0}).sort("created_at", 1).to_list(200) or []
+    }
+    if since:
+        query["created_at"] = {"$gt": since}
+    return await db.messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(200) or []
 
 @api_router.post("/chat/{company_id}/messages")
 async def send_company_chat_message(company_id: str, request: Request, user: dict = Depends(get_current_user)):
