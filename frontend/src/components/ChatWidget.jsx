@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageCircle, X, Send, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
@@ -19,7 +19,7 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
   const lastTypingSent = useRef(0);
   const endRef = useRef(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!user || !companyId) return;
 
     try {
@@ -43,7 +43,7 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
       prevCountRef.current = companyMsgCount;
       setUnread(newUnread);
     } catch (_) {}
-  };
+  }, [user, companyId, companyName]);
 
   const onType = (v) => {
     setText(v);
@@ -65,7 +65,7 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
 
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, [user, companyId, isOwner]);
+  }, [user, companyId, isOwner, load]);
 
   useEffect(() => {
     if (!open || !user || !companyId) return;
