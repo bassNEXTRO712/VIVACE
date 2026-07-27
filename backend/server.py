@@ -966,21 +966,26 @@ async def confirm_change(request: Request, data: CodeConfirm, user: dict = Depen
         raise HTTPException(status_code=400, detail="არასწორი კოდი")
     if is_expired(v["expires_at"]):
         raise HTTPException(status_code=400, detail="კოდის ვადა ამოიწურა")
+
     field, new_val = v["field"], v["new_value"]
+
     if field == "email":
         if await db.users.find_one({"email": new_val, "id": {"$ne": user["id"]}}, {"_id": 1}):
             await db.verifications.delete_many({"user_id": user["id"], "field": field})
             raise HTTPException(status_code=400, detail="ეს მეილი უკვე გამოყენებულია")
+
         await asyncio.gather(
             db.users.update_one({"id": user["id"]}, {"$set": {"email": new_val}}),
             db.companies.update_one({"owner_id": user["id"]}, {"$set": {"email": new_val}}),
         )
+
     elif field == "phone":
         await asyncio.gather(
             db.users.update_one({"id": user["id"]}, {"$set": {"phone": new_val}}),
             db.companies.update_one({"owner_id": user["id"]}, {"$set": {"phone": new_val}}),
         )
-   await db.verifications.delete_many({"user_id": user["id"], "field": field})
+
+    await db.verifications.delete_many({"user_id": user["id"], "field": field})
     return {"status": "მონაცემები წარმატებით განახლდა"}
 
 @api_router.delete("/account")
