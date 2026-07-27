@@ -547,6 +547,25 @@ async def get_ads():
 async def get_user_notifications(user: dict = Depends(get_current_user)):
     return await db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50) or []
 
+@api_router.get("/notifications/summary")
+async def notifications_summary(user: dict = Depends(get_current_user)):
+    """ზარის ღილაკისთვის: {count, items} — ჩატის ჩაუკითხავები + სისტემური შეტყობინებები."""
+    chat_link = "/dashboard?tab=messages" if user.get("role") == "company" else "/profile?tab=messages"
+    threads, notes = await asyncio.gather(
+        _chat_threads(user["id"], only_unread=True),
+        db.notifications.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(20),
+    )
+    items = [{
+        "type": "chat", "title": t["peer_name"], "subtitle": t["last_text"],
+        "count": t["unread"], "link": chat_link, "created_at": t["last_at"],
+    } for t in threads]
+    items += [{
+        "type": "system", "title": "შეტყობინება", "subtitle": n.get("text", ""),
+        "count": 0, "link": None, "created_at": n.get("created_at", ""),
+    } for n in notes]
+    items.sort(key=lambda i: i["created_at"] or "", reverse=True)
+    return {"count": sum(t["unread"] for t in threads), "items": items}
+
 @api_router.post("/admin/seen")
 async def admin_seen(user: dict = Depends(require_admin)):
     await db.users.update_many({"seen_by_admin": False}, {"$set": {"seen_by_admin": True}})
@@ -962,6 +981,43 @@ async def chat_inbox(user: dict = Depends(get_current_user)):
         {"$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}]}, {"_id": 0}
     ).sort("created_at", -1).to_list(100) or []
 
+async def _chat_threads(me: str, only_unread: bool = False) -> list:
+    """ერთი ჩანაწერი = ერთი საუბარი (და არა ცალკეული შეტყობინება)."""
+    cursor = db.messages.aggregate([
+        {"$match": {"$or": [{"sender_id": me}, {"recipient_id": me}]}},
+        {"$addFields": {"peer_id": {"$cond": [{"$eq": ["$sender_id", me]}, "$recipient_id", "$sender_id"]}}},
+        {"$match": {"peer_id": {"$ne": None}}},
+        {"$sort": {"created_at": 1}},
+        {"$group": {
+            "_id": "$peer_id",
+            "company_id":   {"$max": "$company_id"},
+            "last_text":    {"$last": "$text"},
+            "last_at":      {"$last": "$created_at"},
+            "last_from_me": {"$last": {"$eq": ["$sender_id", me]}},
+            "total":        {"$sum": 1},
+            "unread":       {"$sum": {"$cond": [
+                {"$and": [{"$eq": ["$recipient_id", me]}, {"$eq": ["$read", False]}]}, 1, 0]}},
+        }},
+        *([{"$match": {"unread": {"$gt": 0}}}] if only_unread else []),
+        {"$sort": {"last_at": -1}},
+        {"$limit": 100},
+        {"$lookup": {"from": "users", "localField": "_id", "foreignField": "id",
+                     "pipeline": [{"$project": {"_id": 0, "name": 1, "avatar_url": 1, "email": 1}}],
+                     "as": "peer"}},
+        {"$project": {
+            "_id": 0, "peer_id": "$_id", "company_id": 1, "last_text": 1, "last_at": 1,
+            "last_from_me": 1, "total": 1, "unread": 1,
+            "peer_name":   {"$ifNull": [{"$first": "$peer.name"}, "მომხმარებელი"]},
+            "peer_email":  {"$ifNull": [{"$first": "$peer.email"}, ""]},
+            "peer_avatar": {"$ifNull": [{"$first": "$peer.avatar_url"}, ""]},
+        }},
+    ])
+    return await cursor.to_list(100) or []
+
+@api_router.get("/chat/threads")
+async def chat_threads(user: dict = Depends(get_current_user)):
+    return await _chat_threads(user["id"])
+
 @api_router.get("/chat/inbox/unread-count")
 async def chat_unread_count(user: dict = Depends(get_current_user)):
     count = await db.messages.count_documents({"recipient_id": user["id"], "read": False})
@@ -980,8 +1036,20 @@ async def send_chat_message(request: Request, user: dict = Depends(get_current_u
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="შეტყობინება ცარიელია")
-    doc = {"id": str(uuid.uuid4()), "sender_id": user["id"], "recipient_id": body.get("recipient_id"),
-           "text": text, "read": False, "created_at": now_iso()}
+    recipient_id = body.get("recipient_id")
+    company_id   = body.get("company_id")
+    if not company_id:
+        # პასუხი იმავე საუბარში რჩება — company_id მემკვიდრეობით გადმოდის, თორემ
+        # ვიზიტორის ChatWidget-ი (რომელიც company_id-ით ფილტრავს) პასუხს ვერ დაინახავს.
+        prev = await db.messages.find_one(
+            {"company_id": {"$ne": None},
+             "$or": [{"sender_id": user["id"], "recipient_id": recipient_id},
+                     {"sender_id": recipient_id, "recipient_id": user["id"]}]},
+            {"_id": 0, "company_id": 1}, sort=[("created_at", -1)],
+        )
+        company_id = prev["company_id"] if prev else None
+    doc = {"id": str(uuid.uuid4()), "sender_id": user["id"], "recipient_id": recipient_id,
+           "company_id": company_id, "text": text, "read": False, "created_at": now_iso()}
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
     return doc
