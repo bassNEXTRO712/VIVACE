@@ -72,7 +72,10 @@ export default function ChatWidget({ companyId, companyName, isOwner, open, setO
 
     api
       .post(`/chat/${companyId}/read`, {})
-      .then(() => setUnread(0))
+      .then(() => {
+        setUnread(0);
+        window.dispatchEvent(new Event("chat-unread-refresh"));
+      })
       .catch(() => {});
   }, [open, user, companyId]);
 
